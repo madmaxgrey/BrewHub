@@ -1,7 +1,7 @@
 [plugin]
 id = "brew-hub"
 name = "Brew Hub"
-version = "1.0.0"
+version = "1.0.1"
 author = "madmaxgrey"
 description = "A Brew Hub tab in Millennium's settings with Themes and Plugins from steambrew.app, installed in one click with Millennium's own installer."
 

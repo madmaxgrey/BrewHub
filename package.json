@@ -1,6 +1,6 @@
 {
   "name": "brew-hub",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "scripts": {
     "dev": "./node_modules/.bin/starlight watch",
     "build": "./node_modules/.bin/starlight pack",
