@@ -1,5 +1,5 @@
 // @ts-nocheck
-/* Brew Hub 1.0. Adds a Brew Hub tab to Millennium's settings with Themes and Plugins from steambrew.app.
+/* Brew Hub. Adds a Brew Hub tab to Millennium's settings with Themes and Plugins from steambrew.app.
  * Install runs Millennium's own installer (Core_InstallTheme / Core_InstallPlugin), so there is no ID to copy or paste. */
 import { definePlugin, routerHook } from 'millennium';
 
@@ -61,7 +61,6 @@ const LOCALES = {
     statusCleaning: "Cleaning up",
     statusDone: "Done",
     back: "Back",
-    readme: "README",
     noReadme: "No README found.",
     factAuthor: "Author",
     factVersion: "Version",
@@ -130,7 +129,6 @@ const LOCALES = {
     statusCleaning: "Wird aufgeräumt",
     statusDone: "Fertig",
     back: "Zurück",
-    readme: "README",
     noReadme: "Keine README gefunden.",
     factAuthor: "Autor",
     factVersion: "Version",
@@ -199,7 +197,6 @@ const LOCALES = {
     statusCleaning: "Nettoyage",
     statusDone: "Terminé",
     back: "Retour",
-    readme: "README",
     noReadme: "Aucun README trouvé.",
     factAuthor: "Auteur",
     factVersion: "Version",
@@ -268,7 +265,6 @@ const LOCALES = {
     statusCleaning: "Limpiando",
     statusDone: "Hecho",
     back: "Volver",
-    readme: "README",
     noReadme: "No se encontró ningún README.",
     factAuthor: "Autor",
     factVersion: "Versión",
@@ -337,7 +333,6 @@ const LOCALES = {
     statusCleaning: "Limpando",
     statusDone: "Concluído",
     back: "Voltar",
-    readme: "README",
     noReadme: "Nenhum README encontrado.",
     factAuthor: "Autor",
     factVersion: "Versão",
@@ -406,7 +401,6 @@ const LOCALES = {
     statusCleaning: "Очистка",
     statusDone: "Готово",
     back: "Назад",
-    readme: "README",
     noReadme: "README не найден.",
     factAuthor: "Автор",
     factVersion: "Версия",
@@ -475,7 +469,6 @@ const LOCALES = {
     statusCleaning: "正在清理",
     statusDone: "完成",
     back: "返回",
-    readme: "README",
     noReadme: "未找到 README。",
     factAuthor: "作者",
     factVersion: "版本",
@@ -544,7 +537,6 @@ const LOCALES = {
     statusCleaning: "正在清理",
     statusDone: "完成",
     back: "返回",
-    readme: "README",
     noReadme: "找不到 README。",
     factAuthor: "作者",
     factVersion: "版本",
@@ -613,7 +605,6 @@ const LOCALES = {
     statusCleaning: "クリーンアップ中",
     statusDone: "完了",
     back: "戻る",
-    readme: "README",
     noReadme: "README が見つかりません。",
     factAuthor: "作者",
     factVersion: "バージョン",
@@ -682,7 +673,6 @@ const LOCALES = {
     statusCleaning: "정리 중",
     statusDone: "완료",
     back: "뒤로",
-    readme: "README",
     noReadme: "README를 찾을 수 없습니다.",
     factAuthor: "제작자",
     factVersion: "버전",
@@ -751,7 +741,6 @@ const LOCALES = {
     statusCleaning: "Sprzątanie",
     statusDone: "Gotowe",
     back: "Wstecz",
-    readme: "README",
     noReadme: "Nie znaleziono pliku README.",
     factAuthor: "Autor",
     factVersion: "Wersja",
@@ -1744,7 +1733,6 @@ const CSS = `
 .sf-chips{display:flex;gap:6px;flex-wrap:wrap}
 .sf-chip{font-size:12px;padding:3px 9px;border-radius:var(--sf-r);background:var(--sf-field)}
 .sf-chip b{font-weight:500;opacity:.65;margin-right:5px}
-.sf-sec{font-size:13px;font-weight:600;opacity:.75;text-transform:uppercase;letter-spacing:.04em;margin-top:2px}
 .sf-readme{padding:12px 16px;border-radius:var(--sf-r);background:var(--sf-card);font-size:13px;line-height:1.55;overflow-wrap:anywhere}
 .sf-md p{margin:0 0 10px}.sf-md h1,.sf-md h2,.sf-md h3,.sf-md h4,.sf-md h5,.sf-md h6{font-weight:600;margin:16px 0 8px;line-height:1.3}
 .sf-md h1{font-size:20px}.sf-md h2{font-size:17px}.sf-md h3{font-size:15px}.sf-md h4,.sf-md h5,.sf-md h6{font-size:13px}
@@ -1886,7 +1874,6 @@ function Details(props) {
         h('div', { className: 'sf-chips' }, facts.map(f => h('span', { key: f[0], className: 'sf-chip' }, h('b', null, f[0]), f[1])),
           item.tags.map(tag => h('span', { key: 'tag' + tag, className: 'sf-chip' }, tag))),
         item.change ? h('div', { className: 'sf-meta' }, t('latestChange', item.change)) : null)),
-    h('div', { className: 'sf-sec' }, t('readme')),
     h('div', { className: 'sf-readme sf-md' }, d.state === 'loading' ? t('loading') : d.text.trim() ? readme : d.note));
 }
 
@@ -1942,12 +1929,14 @@ function BrewHubView() {
  * Millennium builds its tab list inside MillenniumSettings and gives it to Steam's SidebarNavigation as `pages`. There is no hook for
  * more tabs, so patch the /millennium/settings route: wrap that component and add our page to `pages` after it has rendered. */
 
-const STORE_ICON = () => h('svg', { viewBox: '0 0 24 24', width: 20, height: 20, fill: 'currentColor' }, h('path', { d: 'M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z' }));
+// Some themes hide every settings icon and redraw them by route name, so a new route would get none: show ours regardless
+const TAB_ICON_CSS = 'svg.sf-tabicon{display:block !important}';
+const STORE_ICON = () => h('svg', { className: 'sf-tabicon', viewBox: '0 0 24 24', width: 20, height: 20, fill: 'currentColor' }, h('path', { d: 'M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z' }));
 
 function brewHubPage() {
   const Body = API.DialogBody || 'div';
   const fade = API.Classes && API.Classes.SettingsDialogBodyFade;
-  return { visible: true, title: 'Brew Hub', hideTitle: true, padding: 'compact', icon: h(STORE_ICON), content: h(Body, fade ? { className: fade } : null, h(BrewHubView)), route: PAGE_ROUTE };
+  return { visible: true, title: 'Brew Hub', hideTitle: true, padding: 'compact', icon: h(React.Fragment, null, h('style', null, TAB_ICON_CSS), h(STORE_ICON)), content: h(Body, fade ? { className: fade } : null, h(BrewHubView)), route: PAGE_ROUTE };
 }
 
 let injected = 0;
