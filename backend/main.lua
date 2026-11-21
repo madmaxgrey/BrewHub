@@ -109,6 +109,62 @@ function sf_readme(owner, repo)
     return fail("no README found")
 end
 
+---@ffi
+---@param owner string
+---@param repo string
+---@return string
+function sf_github_release(owner, repo)
+    if type(owner) ~= "string" or type(repo) ~= "string" or not owner:match("^[%w%-%._]+$") or not repo:match("^[%w%-%._]+$") then
+        return fail("bad repository")
+    end
+    if not http_ok or type(http) ~= "table" or type(http.get) ~= "function" then return fail("the http module is not available") end
+    local ok, res = pcall(http.get, "https://api.github.com/repos/" .. owner .. "/" .. repo .. "/releases/latest", {
+        headers = { ["User-Agent"] = "Millennium-BrewHub", ["Accept"] = "application/vnd.github.v3+json" },
+        timeout = 10
+    })
+    if ok and type(res) == "table" and res.status == 200 and type(res.body) == "string" and #res.body > 0 then
+        return res.body
+    end
+    return fail("no release found")
+end
+
+---@ffi
+---@param owner string
+---@param repo string
+---@return string
+function sf_github_repo(owner, repo)
+    if type(owner) ~= "string" or type(repo) ~= "string" or not owner:match("^[%w%-%._]+$") or not repo:match("^[%w%-%._]+$") then
+        return fail("bad repository")
+    end
+    if not http_ok or type(http) ~= "table" or type(http.get) ~= "function" then return fail("the http module is not available") end
+    local ok, res = pcall(http.get, "https://api.github.com/repos/" .. owner .. "/" .. repo, {
+        headers = { ["User-Agent"] = "Millennium-BrewHub", ["Accept"] = "application/vnd.github.v3+json" },
+        timeout = 10
+    })
+    if ok and type(res) == "table" and res.status == 200 and type(res.body) == "string" and #res.body > 0 then
+        return res.body
+    end
+    return fail("no repo found")
+end
+
+---@ffi
+---@param owner string
+---@param repo string
+---@return string
+function sf_github_manifest(owner, repo)
+    if type(owner) ~= "string" or type(repo) ~= "string" or not owner:match("^[%w%-%._]+$") or not repo:match("^[%w%-%._]+$") then
+        return fail("bad repository")
+    end
+    if not http_ok or type(http) ~= "table" or type(http.get) ~= "function" then return fail("the http module is not available") end
+    for _, name in ipairs({ "millennium.toml", "plugin.json" }) do
+        local ok, res = pcall(http.get, "https://raw.githubusercontent.com/" .. owner .. "/" .. repo .. "/HEAD/" .. name, { timeout = 10 })
+        if ok and type(res) == "table" and res.status == 200 and type(res.body) == "string" and #res.body > 0 then
+            return json.encode({ text = res.body })
+        end
+    end
+    return fail("no manifest found")
+end
+
 local function on_load()
     logger:info("Brew Hub loaded")
     millennium.ready()

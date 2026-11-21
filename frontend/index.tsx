@@ -24,6 +24,15 @@ const LOCALES = {
   english: {
     tabThemes: "Themes",
     tabPlugins: "Plugins",
+    tabUnofficial: "Unofficial",
+    updateBtn: "Update",
+    updateAvailable: "Update Available",
+    addPlugin: "Add Plugin",
+    addPluginLoading: "Adding...",
+    addPluginErrInvalid: "Invalid GitHub URL. Example: https://github.com/owner/repo",
+    addPluginErrExists: "This plugin is already in your Unofficial list.",
+    cancel: "Cancel",
+    remove: "Remove",
     refresh: "Refresh",
     loading: "Loading...",
     sortPopular: "Most downloaded",
@@ -917,10 +926,162 @@ function normalizePlugin(p) {
 
 const SOURCES = { themes: normalizeTheme, plugins: normalizePlugin };
 
+const CUSTOM_STORAGE_KEY = 'brewhub:custom_plugins';
+
+function getCustomPlugins() {
+  try {
+    const raw = localStorage.getItem(CUSTOM_STORAGE_KEY);
+    if (!raw) return [];
+    const list = JSON.parse(raw);
+    return Array.isArray(list) ? list : [];
+  } catch (e) {
+    return [];
+  }
+}
+
+function saveCustomPlugins(list) {
+  try {
+    localStorage.setItem(CUSTOM_STORAGE_KEY, JSON.stringify(list));
+  } catch (e) {
+    log('could not save custom plugins', e);
+  }
+}
+
+function removeCustomPlugin(id) {
+  const current = getCustomPlugins();
+  const next = current.filter(p => p.id !== id && (p.owner + '/' + p.repo).toLowerCase() !== String(id).toLowerCase());
+  saveCustomPlugins(next);
+  if (store.data.unofficial) {
+    store.data.unofficial.items = store.data.unofficial.items.filter(p => p.id !== id && (p.owner + '/' + p.repo).toLowerCase() !== String(id).toLowerCase());
+  }
+  emit();
+}
+
+function parseGithubUrl(raw) {
+  if (!raw || typeof raw !== 'string') return null;
+  const s = raw.trim();
+  const m = s.match(/(?:https?:\/\/)?(?:www\.)?github\.com\/([^\/\s?#]+)\/([^\/\s?#]+)/i)
+         || s.match(/^([a-zA-Z0-9_\-\.]+)\/([a-zA-Z0-9_\-\.]+)$/);
+  if (!m) return null;
+  const owner = m[1].trim();
+  const repo = m[2].replace(/\.git$/i, '').trim();
+  if (!owner || !repo) return null;
+  return { owner, repo };
+}
+
+async function fetchGithubPlugin(owner, repo) {
+  if (typeof backend === 'undefined' || !backend) throw new Error('Millennium backend is not available');
+  
+  const relRaw = await withRetry(() => fromBackend(backend.sf_github_release(owner, repo)), 1);
+  if (!relRaw || !relRaw.tag_name) {
+    throw new Error('No GitHub releases found. Millennium plugins require a GitHub release with a .star or .zip asset.');
+  }
+  const assets = Array.isArray(relRaw.assets) ? relRaw.assets : [];
+  const asset = assets.find(a => (a.name || '').endsWith('.star') || (a.name || '').endsWith('.zip')) || assets[0];
+  if (!asset || !asset.browser_download_url) {
+    throw new Error('No .star or .zip download asset found in the latest release (' + relRaw.tag_name + ').');
+  }
+
+  let repoMeta = {};
+  try {
+    if (typeof backend.sf_github_repo === 'function') {
+      repoMeta = await withRetry(() => fromBackend(backend.sf_github_repo(owner, repo)), 1) || {};
+    }
+  } catch (e) {}
+
+  let pluginId = repo.toLowerCase();
+  let pluginName = repoMeta.name || repo;
+  let pluginDesc = repoMeta.description || relRaw.name || '';
+  try {
+    if (typeof backend.sf_github_manifest === 'function') {
+      const mfRaw = await fromBackend(backend.sf_github_manifest(owner, repo));
+      if (mfRaw && mfRaw.text) {
+        const idMatch = mfRaw.text.match(/\bid\s*=\s*["']([^"']+)["']/i) || mfRaw.text.match(/"id"\s*:\s*"([^"]+)"/i);
+        if (idMatch) pluginId = idMatch[1].trim();
+        const nameMatch = mfRaw.text.match(/\bname\s*=\s*["']([^"']+)["']/i) || mfRaw.text.match(/"name"\s*:\s*"([^"]+)"/i);
+        if (nameMatch) pluginName = nameMatch[1].trim();
+        const descMatch = mfRaw.text.match(/\bdescription\s*=\s*["']([^"']+)["']/i) || mfRaw.text.match(/"description"\s*:\s*"([^"]+)"/i);
+        if (descMatch) pluginDesc = descMatch[1].trim();
+      }
+    }
+  } catch (e) {}
+
+  return {
+    kind: 'unofficial',
+    id: pluginId,
+    name: pluginName,
+    folder: pluginId,
+    author: repoMeta.owner && repoMeta.owner.login ? repoMeta.owner.login : owner,
+    owner: owner,
+    repo: repo,
+    version: String(relRaw.tag_name).replace(/^v/i, ''),
+    description: pluginDesc,
+    downloadUrl: asset.browser_download_url,
+    fileSize: asset.size || 0,
+    tags: [],
+    allTags: [],
+    downloads: 0,
+    updated: day(relRaw.published_at || Date.now()),
+    stars: num(repoMeta.stargazers_count),
+    image: '',
+    disk: pluginId,
+    backend: 'Lua',
+    isCustom: true,
+  };
+}
+
+async function addCustomPlugin(url) {
+  const parsed = parseGithubUrl(url);
+  if (!parsed) throw new Error(t('addPluginErrInvalid') || 'Invalid GitHub URL. Example: https://github.com/owner/repo');
+  const { owner, repo } = parsed;
+  const current = getCustomPlugins();
+  if (current.some(p => (p.owner + '/' + p.repo).toLowerCase() === (owner + '/' + repo).toLowerCase())) {
+    throw new Error(t('addPluginErrExists') || 'This plugin is already in your Unofficial list.');
+  }
+  const item = await fetchGithubPlugin(owner, repo);
+  const updated = [item, ...current.filter(p => p.id !== item.id)];
+  saveCustomPlugins(updated);
+  if (store.data.unofficial) {
+    store.data.unofficial.items = updated;
+    store.data.unofficial.state = 'ready';
+  }
+  emit();
+  return item;
+}
+
+async function loadUnofficialPlugins() {
+  const list = getCustomPlugins();
+  if (!list.length) return [];
+  list.forEach(item => { item.tags = []; item.allTags = []; });
+  await Promise.allSettled(list.map(async (item) => {
+    try {
+      if (typeof backend === 'undefined' || !backend || typeof backend.sf_github_release !== 'function') return;
+      const res = await withRetry(() => fromBackend(backend.sf_github_release(item.owner, item.repo)), 1);
+      if (res && res.tag_name) {
+        item.version = String(res.tag_name).replace(/^v/i, '');
+        if (res.published_at) item.updated = day(res.published_at);
+        if (Array.isArray(res.assets) && res.assets.length > 0) {
+          const asset = res.assets.find(a => (a.name || '').endsWith('.star') || (a.name || '').endsWith('.zip')) || res.assets[0];
+          if (asset && asset.browser_download_url) {
+            item.downloadUrl = asset.browser_download_url;
+            item.fileSize = asset.size;
+          }
+        }
+      }
+    } catch (e) {}
+  }));
+  saveCustomPlugins(list);
+  return list;
+}
+
 /* ═════════════ shared state (survives leaving the tab) ═════════════ */
 
 const store = {
-  data: { themes: { state: 'idle', items: [], at: 0, error: '' }, plugins: { state: 'idle', items: [], at: 0, error: '' } },
+  data: {
+    themes: { state: 'idle', items: [], at: 0, error: '' },
+    plugins: { state: 'idle', items: [], at: 0, error: '' },
+    unofficial: { state: 'idle', items: [], at: 0, error: '' },
+  },
   installedSig: '',
   installed: null, // { themes: { "owner/repo": { native, name } }, plugins: { folder: { enabled } }, active: native folder name }
   detail: null, // { kind, id } while the details view is open
@@ -937,10 +1098,18 @@ const setOp = (key, patch) => { store.ops[key] = Object.assign({}, store.ops[key
 
 async function load(kind, force) {
   const s = store.data[kind];
+  if (!s) return;
   if (s.state === 'loading') return;
   if (!force && s.state === 'ready' && Date.now() - s.at < CACHE_MS) return;
   s.state = 'loading'; s.error = ''; emit();
   try {
+    if (kind === 'unofficial') {
+      const items = await loadUnofficialPlugins();
+      s.items = items;
+      s.state = 'ready'; s.at = Date.now();
+      emit();
+      return;
+    }
     const raw = await listFromSite(kind);
     if (!Array.isArray(raw)) throw new Error('Unexpected answer from steambrew.app');
     s.items = raw.map(SOURCES[kind]).filter(Boolean);
@@ -960,7 +1129,14 @@ async function refreshInstalled() {
       const g = x && x.data && x.data.github;
       if (g && g.owner && (g.repo_name || g.repo)) t[pairKey(g.owner, g.repo_name || g.repo)] = { native: x.native, name: x.data.name };
     });
-    (Array.isArray(plugins) ? plugins : []).forEach(x => { if (x && x.data && x.data.name) p[x.data.name] = { enabled: !!x.enabled }; });
+    (Array.isArray(plugins) ? plugins : []).forEach(x => {
+      if (x && x.data) {
+        const entry = { enabled: !!x.enabled, version: String(x.data.version || '') };
+        if (x.data.name) p[x.data.name] = entry;
+        if (x.name) p[x.name] = entry;
+        if (x.data.id) p[x.data.id] = entry;
+      }
+    });
     const next = { themes: t, plugins: p, active: active && active.native ? String(active.native) : '' };
     const sig = JSON.stringify(next);
     if (sig === store.installedSig) return; // nothing changed: no re-render
@@ -1038,6 +1214,19 @@ function installPlugin(item) {
     },
     () => core('Core_IsPluginInstalled')(folder),
     () => countDownload('plugin', item.id));
+}
+
+function installUnofficialPlugin(item, isUpdate) {
+  const key = 'unofficial:' + item.id;
+  let folder = item.folder || item.name;
+  return runInstall(item, key,
+    async () => {
+      if (!isUpdate && await core('Core_IsPluginInstalled')(folder)) throw new Error(t('errAlready'));
+      if (!item.downloadUrl) throw new Error(t('errNoLink'));
+      return core('Core_InstallPlugin')(item.downloadUrl, item.fileSize || 0);
+    },
+    () => core('Core_IsPluginInstalled')(folder),
+    () => {});
 }
 
 const enablePlugin = folder => core('Core_ChangePluginStatus')(JSON.stringify([{ plugin_name: folder, enabled: true }])).then(refreshInstalled);
@@ -1716,6 +1905,7 @@ const CSS = `
 .sf-act{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
 .sf-btn{box-sizing:border-box !important;width:100% !important;min-width:0 !important;max-width:100% !important;height:32px !important;min-height:0 !important;margin:0 !important;padding:0 12px !important;line-height:1 !important;font-size:13px !important;display:flex !important;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .sf-foot>.sf-btn{flex:0 0 84px;width:84px !important}
+.sf-foot>.sf-del{flex:0 0 36px;width:36px !important;min-width:0 !important;padding:0 !important}
 .sf-bar{height:3px;background:var(--sf-field);overflow:hidden}
 .sf-fill{height:100%;background:var(--sf-accent);transition:width .2s}
 .sf-err{font-size:12px;color:#e8745a;word-break:break-word}
@@ -1759,7 +1949,7 @@ const CSS = `
 @media (max-width:900px){.sf-dmain{flex-direction:column}.sf-dhero{width:100%;flex-basis:auto}}
 `;
 
-const Btn = props => h(API.DialogButton || 'button', Object.assign({}, props, { className: 'sf-btn' }));
+const Btn = props => h(API.DialogButton || 'button', Object.assign({}, props, { className: 'sf-btn' + (props && props.className ? ' ' + props.className : '') }));
 
 const SORTS = [['popular', 'sortPopular'], ['unpopular', 'sortUnpopular'], ['updated', 'sortUpdated'], ['stale', 'sortStale'], ['name', 'sortName']];
 
@@ -1784,20 +1974,37 @@ function Filter(props) {
 
 const SEARCH_ICON = () => h('svg', { className: 'sf-searchicon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' }, h('circle', { cx: 10, cy: 10, r: 6.5 }), h('path', { d: 'M15 15l6 6' }));
 
+function isNewerVersion(remote, local) {
+  if (!remote || !local) return false;
+  const clean = v => String(v).replace(/^[vV]/, '').trim();
+  const r = clean(remote).split('.').map(Number);
+  const l = clean(local).split('.').map(Number);
+  for (let i = 0; i < Math.max(r.length, l.length); i++) {
+    const rNum = isNaN(r[i]) ? 0 : r[i];
+    const lNum = isNaN(l[i]) ? 0 : l[i];
+    if (rNum > lNum) return true;
+    if (rNum < lNum) return false;
+  }
+  return false;
+}
+
 function itemInfo(item) {
   const inst = store.installed;
   if (!inst) return null;
   if (item.kind === 'theme') { const t = inst.themes[pairKey(item.owner, item.repo)]; return t ? { native: t.native, active: !!inst.active && t.native === inst.active } : null; }
-  return inst.plugins[item.folder] ? { enabled: inst.plugins[item.folder].enabled } : null;
+  const p = inst.plugins[item.folder] || inst.plugins[item.name] || (item.id && inst.plugins[item.id]);
+  if (!p) return null;
+  const hasUpdate = isNewerVersion(item.version, p.version);
+  return { enabled: p.enabled, version: p.version, hasUpdate };
 }
 
 function arrange(list, query, sort, filter) {
   const q = query.trim().toLowerCase();
   let out = list;
-  if (q) out = out.filter(i => (i.name + ' ' + i.description + ' ' + i.author + ' ' + i.allTags.join(' ')).toLowerCase().includes(q));
+  if (q) out = out.filter(i => (i.name + ' ' + i.description + ' ' + i.author + ' ' + (i.allTags || []).join(' ')).toLowerCase().includes(q));
   if (filter === 'installed') out = out.filter(i => !!itemInfo(i));
   else if (filter === 'missing') out = out.filter(i => !itemInfo(i));
-  else if (filter.startsWith('tag:')) out = out.filter(i => i.allTags.includes(filter.slice(4)));
+  else if (filter.startsWith('tag:')) out = out.filter(i => (i.allTags || []).includes(filter.slice(4)));
   out = out.slice();
   const by = { popular: (a, b) => b.downloads - a.downloads, unpopular: (a, b) => a.downloads - b.downloads, updated: (a, b) => b.updated.localeCompare(a.updated), stale: (a, b) => a.updated.localeCompare(b.updated), name: (a, b) => a.name.localeCompare(b.name) };
   out.sort(by[sort] || by.popular);
@@ -1808,7 +2015,7 @@ function filterOptions(kind, items) {
   const opts = [{ label: t('filterAll'), data: 'all' }, { label: t('filterInstalled'), data: 'installed' }, { label: t('filterMissing'), data: 'missing' }];
   if (kind === 'themes') {
     const count = {};
-    items.forEach(i => i.allTags.forEach(tg => { count[tg] = (count[tg] || 0) + 1; }));
+    items.forEach(i => (i.allTags || []).forEach(tg => { count[tg] = (count[tg] || 0) + 1; }));
     Object.keys(count).sort((a, b) => count[b] - count[a] || a.localeCompare(b)).slice(0, 40).forEach(tg => opts.push({ label: translate('filterTag', tg), data: 'tag:' + tg }));
   }
   return opts;
@@ -1827,18 +2034,129 @@ function ActionBlock(props) {
   if (info && item.kind === 'theme') {
     return h('div', { className: 'sf-act' }, info.active ? h(Btn, { disabled: true }, t('active')) : h(Btn, { onClick: () => applyTheme(info.native) }, t('useTheme')));
   }
-  if (info) return h('div', { className: 'sf-act' }, info.enabled ? h(Btn, { disabled: true }, t('enabled')) : h(Btn, { onClick: () => enablePlugin(item.folder) }, t('enable')));
+  if (info) {
+    if (info.hasUpdate) {
+      return h('div', { className: 'sf-act' },
+        h(Btn, { onClick: () => installUnofficialPlugin(item, true) }, t('updateBtn') || 'Update'),
+        op.state === 'error' ? h('div', { className: 'sf-err' }, op.msg) : null);
+    }
+    return h('div', { className: 'sf-act' }, info.enabled ? h(Btn, { disabled: true }, t('enabled')) : h(Btn, { onClick: () => enablePlugin(item.folder || item.name) }, t('enable')));
+  }
   if (item.buildFailing) return h('div', { className: 'sf-act' }, h(Btn, { disabled: true }, t('buildFailing')));
   return h('div', { className: 'sf-act' },
-    h(Btn, { onClick: () => (item.kind === 'theme' ? installTheme(item) : installPlugin(item)) }, op.state === 'error' ? t('retry') : t('install')),
+    h(Btn, { onClick: () => (item.kind === 'theme' ? installTheme(item) : item.kind === 'unofficial' ? installUnofficialPlugin(item, false) : installPlugin(item)) }, op.state === 'error' ? t('retry') : t('install')),
     op.state === 'error' ? h('div', { className: 'sf-err' }, op.msg) : null);
+}
+
+function AddCard() {
+  const [active, setActive] = React.useState(false);
+  const [url, setUrl] = React.useState('');
+  const [loading, setLoading] = React.useState(false);
+  const [err, setErr] = React.useState('');
+  const inputRef = React.useRef(null);
+
+  React.useEffect(() => {
+    if (active && inputRef.current) {
+      inputRef.current.focus();
+    }
+  }, [active]);
+
+  const submit = async () => {
+    const trimmed = url.trim();
+    if (!trimmed || loading) return;
+    setLoading(true); setErr('');
+    try {
+      await addCustomPlugin(trimmed);
+      setUrl('');
+      setActive(false);
+    } catch (e) {
+      setErr(String(e && e.message || e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const onKey = e => {
+    if (e.key === 'Enter') submit();
+    if (e.key === 'Escape') { setActive(false); setErr(''); }
+  };
+
+  if (!active) {
+    return h('div', {
+      className: 'sf-card sf-clickable',
+      onClick: () => setActive(true),
+      style: {
+        minHeight: 195,
+        display: 'flex',
+        flexDirection: 'column',
+        alignItems: 'center',
+        justifyContent: 'center',
+        border: '1px dashed var(--sf-accent)',
+        background: 'color-mix(in srgb, var(--sf-card) 70%, transparent)',
+        padding: 16,
+        textAlign: 'center',
+        gap: 8,
+        cursor: 'pointer',
+        boxSizing: 'border-box'
+      }
+    },
+      h('svg', { viewBox: '0 0 24 24', width: 34, height: 34, fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round', style: { opacity: 0.85 } },
+        h('circle', { cx: 12, cy: 12, r: 10 }),
+        h('line', { x1: 12, y1: 8, x2: 12, y2: 16 }),
+        h('line', { x1: 8, y1: 12, x2: 16, y2: 12 })
+      ),
+      h('div', { style: { fontSize: 15, fontWeight: 600 } }, t('addPlugin') || 'Add Plugin'),
+      h('div', { style: { fontSize: 12, opacity: 0.65 } }, 'Enter GitHub repository URL')
+    );
+  }
+
+  return h('div', {
+    className: 'sf-card',
+    style: {
+      minHeight: 195,
+      padding: 12,
+      display: 'flex',
+      flexDirection: 'column',
+      gap: 8,
+      border: '1px solid var(--sf-accent)',
+      boxSizing: 'border-box'
+    }
+  },
+    h('div', { style: { fontSize: 14, fontWeight: 600 } }, t('addPlugin') || 'Add Plugin'),
+    h('input', {
+      ref: inputRef,
+      className: 'sf-input',
+      style: { width: '100%', boxSizing: 'border-box' },
+      value: url,
+      placeholder: 'https://github.com/owner/repo',
+      onChange: e => { setUrl(e.target.value); setErr(''); },
+      onKeyDown: onKey,
+      disabled: loading
+    }),
+    err ? h('div', { className: 'sf-err', style: { fontSize: 11 } }, err) : null,
+    h('div', { style: { marginTop: 'auto', display: 'flex', gap: 8, width: '100%' } },
+      h('div', { style: { flex: '1 1 0', minWidth: 0 } },
+        h(Btn, {
+          onClick: submit,
+          disabled: loading || !url.trim(),
+        }, loading ? 'Adding...' : 'Add')
+      ),
+      h('div', { style: { flex: '1 1 0', minWidth: 0 } },
+        h(Btn, {
+          onClick: () => { setActive(false); setErr(''); setUrl(''); },
+          disabled: loading,
+        }, t('cancel') || 'Cancel')
+      )
+    )
+  );
 }
 
 function Card(props) {
   const item = props.item;
+  const info = itemInfo(item);
   const open = () => openDetails(item);
   const meta = [t('by', item.author), item.version ? 'v' + item.version : '', item.size].filter(Boolean).join(' · ');
-  const stats = [t('downloads', compact(item.downloads)), item.updated ? t('updatedOn', item.updated) : ''].filter(Boolean).join(' · ');
+  const stats = [item.downloads ? t('downloads', compact(item.downloads)) : '', item.updated ? t('updatedOn', item.updated) : ''].filter(Boolean).join(' · ');
   return h('div', { className: 'sf-card' },
     item.image ? h('div', { className: 'sf-img sf-clickable', onClick: open, style: { backgroundImage: 'url("' + encodeURI(item.image) + '")' } }) : null,
     h('div', { className: 'sf-body' },
@@ -1846,9 +2164,18 @@ function Card(props) {
         h('div', { className: 'sf-name', title: item.name }, item.name),
         h('div', { className: 'sf-meta' }, meta),
         h('div', { className: 'sf-desc' }, item.description)),
-      item.tags.length ? h('div', { className: 'sf-tags' }, item.tags.map(tag => h('span', { key: tag, className: 'sf-tag' }, tag))) : null,
+      (item.tags || []).length ? h('div', { className: 'sf-tags' }, item.tags.map(tag => h('span', { key: tag, className: 'sf-tag' }, tag))) : null,
+      info && info.hasUpdate ? h('div', { className: 'sf-tag', style: { display: 'inline-block', width: 'fit-content', color: '#66c0f4', borderColor: '#66c0f4', marginTop: 4 } }, (t('updateAvailable') || 'Update Available') + (item.version ? ' (v' + item.version + ')' : '')) : null,
       h('div', { className: 'sf-meta' }, stats),
-      h('div', { className: 'sf-foot' }, h(ActionBlock, { item }), h(Btn, { onClick: open }, t('details')))));
+      h('div', { className: 'sf-foot' },
+        h(ActionBlock, { item }),
+        h(Btn, { onClick: open }, t('details')),
+        (item.kind === 'unofficial' || item.isCustom) ? h(Btn, {
+          className: 'sf-del',
+          onClick: () => removeCustomPlugin(item.id),
+          title: t('remove') || 'Remove from list'
+        }, '✕') : null
+      )));
 }
 
 function Details(props) {
@@ -1857,9 +2184,9 @@ function Details(props) {
   const readme = React.useMemo(() => (d.text.trim() ? renderMarkdown(d.text, { owner: item.owner, repo: item.repo }) : null), [d.text, item.owner, item.repo]);
   const facts = [
     [t('factAuthor'), item.author], [t('factVersion'), item.version], [t('factUpdated'), item.updated], [t('factDownloads'), item.downloads ? item.downloads.toLocaleString() : ''],
-    item.kind === 'plugin' ? [t('factStars'), item.stars ? String(item.stars) : ''] : null, item.kind === 'plugin' ? [t('factDownload'), item.size] : null,
-    item.kind === 'plugin' ? [t('factRepository'), item.disk] : null, item.kind === 'plugin' ? [t('factBackend'), item.backend || t('backendNone')] : null,
-    [item.kind === 'plugin' ? t('factFolder') : t('factRepo'), item.kind === 'plugin' ? item.folder : (item.owner && item.repo ? item.owner + '/' + item.repo : '')],
+    (item.kind === 'plugin' || item.kind === 'unofficial') ? [t('factStars'), item.stars ? String(item.stars) : ''] : null, (item.kind === 'plugin' || item.kind === 'unofficial') ? [t('factDownload'), item.size] : null,
+    (item.kind === 'plugin' || item.kind === 'unofficial') ? [t('factRepository'), item.disk] : null, (item.kind === 'plugin' || item.kind === 'unofficial') ? [t('factBackend'), item.backend || t('backendNone')] : null,
+    [(item.kind === 'plugin' || item.kind === 'unofficial') ? t('factFolder') : t('factRepo'), (item.kind === 'plugin' || item.kind === 'unofficial') ? item.folder : (item.owner && item.repo ? item.owner + '/' + item.repo : '')],
   ].filter(f => f && f[1]);
   const link = (label, url) => url ? h(Btn, { key: label, onClick: () => openUrl(url) }, label) : null;
   const hero = item.kind === 'theme' && (item.splash || item.image);
@@ -1869,21 +2196,26 @@ function Details(props) {
       h('div', { className: 'sf-dinfo' },
         h('div', { className: 'sf-dhead' }, h(Btn, { onClick: closeDetails }, '‹ ' + t('back')), h('div', { className: 'sf-dtitle', title: item.name }, item.name)),
         h('div', { className: 'sf-dactions' }, h(ActionBlock, { item }),
-          link('steambrew.app', pageUrl(item)), link('GitHub', repoUrl(item)), item.discord ? link('Discord', 'https://discord.gg/' + item.discord) : null),
+          item.kind !== 'unofficial' ? link('steambrew.app', pageUrl(item)) : null, link('GitHub', repoUrl(item)), item.discord ? link('Discord', 'https://discord.gg/' + item.discord) : null),
         item.description ? h('div', null, item.description) : null,
         h('div', { className: 'sf-chips' }, facts.map(f => h('span', { key: f[0], className: 'sf-chip' }, h('b', null, f[0]), f[1])),
-          item.tags.map(tag => h('span', { key: 'tag' + tag, className: 'sf-chip' }, tag))),
+          (item.tags || []).map(tag => h('span', { key: 'tag' + tag, className: 'sf-chip' }, tag))),
         item.change ? h('div', { className: 'sf-meta' }, t('latestChange', item.change)) : null)),
     h('div', { className: 'sf-readme sf-md' }, d.state === 'loading' ? t('loading') : d.text.trim() ? readme : d.note));
 }
 
 function BrewHubView() {
   useStore();
-  const [section, setSection] = React.useState(() => { try { return sessionStorage.getItem('brewhub-section') === 'plugins' ? 'plugins' : 'themes'; } catch (e) { return 'themes'; } });
+  const [section, setSection] = React.useState(() => {
+    try {
+      const s = sessionStorage.getItem('brewhub-section');
+      return s === 'plugins' || s === 'unofficial' ? s : 'themes';
+    } catch (e) { return 'themes'; }
+  });
   const [query, setQuery] = React.useState('');
   const [sort, setSort] = React.useState('popular');
   const [filter, setFilter] = React.useState('all');
-  const pick = id => { setSection(id); setFilter('all'); try { sessionStorage.setItem('brewhub-section', id); } catch (e) { /* ignore */ } };
+  const pick = id => { setSection(id); setFilter('all'); try { sessionStorage.setItem('brewhub-section', id); } catch (e) {} };
 
   React.useEffect(() => { load(section, false); }, [section]);
   // what is installed changes outside of this tab too (Millennium's own Themes and Plugins tabs): look again on opening, on focus and every few seconds
@@ -1897,25 +2229,28 @@ function BrewHubView() {
   }, []);
 
   if (store.detail) {
-    const open = (store.data[store.detail.kind + 's'].items || []).find(i => i.id === store.detail.id);
+    const sectionKey = store.detail.kind === 'unofficial' ? 'unofficial' : store.detail.kind + 's';
+    const open = (store.data[sectionKey].items || []).find(i => i.id === store.detail.id);
     if (open) return h('div', { className: 'sf-root' }, h('style', null, CSS), h(Details, { item: open }));
     store.detail = null;
   }
 
-  const data = store.data[section];
+  const data = store.data[section] || { state: 'idle', items: [] };
   const shown = arrange(data.items, query, sort, filter);
   const tab = (id, label) => h('div', { key: id, role: 'button', className: 'sf-tab' + (section === id ? ' sf-on' : ''), onClick: () => pick(id) },
-    label + (store.data[id].state === 'ready' ? ' (' + store.data[id].items.length + ')' : ''));
+    label + (store.data[id] && store.data[id].state === 'ready' ? ' (' + store.data[id].items.length + ')' : ''));
 
   let body;
   if (data.state === 'loading' && !data.items.length) body = h('div', { className: 'sf-empty' }, t('loadingList'));
   else if (data.state === 'error' && !data.items.length) body = h('div', { className: 'sf-empty' }, h('div', null, t('loadFailed', data.error)), h('div', { style: { marginTop: 12, display: 'inline-block' } }, h(Btn, { onClick: () => load(section, true) }, t('tryAgain'))));
-  else if (!shown.length) body = h('div', { className: 'sf-empty' }, data.state === 'ready' ? t('noMatch') : '');
-  else body = h('div', { className: 'sf-grid' }, shown.map(i => h(Card, { key: i.kind + ':' + i.id, item: i })));
+  else if (!shown.length && section !== 'unofficial') body = h('div', { className: 'sf-empty' }, data.state === 'ready' ? t('noMatch') : '');
+  else body = h('div', { className: 'sf-grid' },
+    shown.map(i => h(Card, { key: i.kind + ':' + i.id, item: i })),
+    section === 'unofficial' ? h(AddCard) : null);
 
   return h('div', { className: 'sf-root' },
     h('style', null, CSS),
-    h('div', { className: 'sf-bar1' }, tab('themes', t('tabThemes')), tab('plugins', t('tabPlugins')), h('div', { className: 'sf-grow' }),
+    h('div', { className: 'sf-bar1' }, tab('themes', t('tabThemes')), tab('plugins', t('tabPlugins')), tab('unofficial', t('tabUnofficial') || 'Unofficial'), h('div', { className: 'sf-grow' }),
       h('div', { style: { width: 110 } }, h(Btn, { onClick: () => { load(section, true); refreshInstalled(); }, disabled: data.state === 'loading' }, data.state === 'loading' ? t('loading') : t('refresh')))),
     h('div', { className: 'sf-bar2' },
       h('div', { className: 'sf-pills' }, SORTS.map(o => h('div', { key: o[0], role: 'button', className: 'sf-pill' + (sort === o[0] ? ' sf-on' : ''), onClick: () => setSort(o[0]) }, t(o[1])))),
@@ -2023,14 +2358,20 @@ async function main() {
   (window as any).__brewhub = {
     dispose,
     // for bug reports: did the route patch run and did the tab get added (injected stays 0 until Millennium's settings have been opened)
-    status: () => ({ patched: !!settingsEntry, injected, emitterHooked, installed: !!store.installed, themes: store.data.themes.state, plugins: store.data.plugins.state }),
-    reload: () => Promise.all([load('themes', true), load('plugins', true), refreshInstalled()]),
-    openDetails: (kind, id) => { const item = store.data[kind === 'theme' ? 'themes' : 'plugins'].items.find(i => i.id === id); if (item) openDetails(item); return !!item; },
+    status: () => ({ patched: !!settingsEntry, injected, emitterHooked, installed: !!store.installed, themes: store.data.themes.state, plugins: store.data.plugins.state, unofficial: store.data.unofficial.state }),
+    reload: () => Promise.all([load('themes', true), load('plugins', true), load('unofficial', true), refreshInstalled()]),
+    openDetails: (kind, id) => {
+      const sectionKey = kind === 'unofficial' ? 'unofficial' : (kind === 'theme' ? 'themes' : 'plugins');
+      const item = (store.data[sectionKey].items || []).find(i => i.id === id);
+      if (item) openDetails(item);
+      return !!item;
+    },
     // install from the console by steambrew.app id: __brewhub.install('theme', '<20 char id>') or ('plugin', '<12 char id>')
     install: (kind, id) => {
-      const item = store.data[kind === 'theme' ? 'themes' : 'plugins'].items.find(i => i.id === id);
+      const sectionKey = kind === 'unofficial' ? 'unofficial' : (kind === 'theme' ? 'themes' : 'plugins');
+      const item = (store.data[sectionKey].items || []).find(i => i.id === id);
       if (!item) return Promise.reject(new Error('Not in the loaded list. Run __brewhub.reload() first.'));
-      return kind === 'theme' ? installTheme(item) : installPlugin(item);
+      return kind === 'theme' ? installTheme(item) : (kind === 'unofficial' ? installUnofficialPlugin(item, false) : installPlugin(item));
     },
   };
   stopped = false;

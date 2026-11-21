@@ -2,9 +2,9 @@
   "name": "brew-hub",
   "version": "1.0.1",
   "scripts": {
-    "dev": "./node_modules/.bin/starlight watch",
-    "build": "./node_modules/.bin/starlight pack",
-    "prepare": "./node_modules/.bin/starlight lsp"
+    "dev": "starlight watch",
+    "build": "starlight pack",
+    "prepare": "starlight lsp"
   },
   "devDependencies": {
     "@types/react": "19.1.1",
