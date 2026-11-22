@@ -10,6 +10,7 @@ A Millennium plugin that adds a **Brew Hub** tab to Millennium's settings, next 
 - Installs count towards the download numbers on steambrew.app, like Millennium's own installer
 - A Steam notification when an install finishes, on by default; switch it off in Millennium → Plugins → Brew Hub
 - Square corners like Steam's own UI. With SpaceTheme or Minimal Dark active, the Brew Hub takes their colours, accent and corner radius; with any other theme it uses neutral tints
+- For theme authors: every class name (`bh-…`) and CSS variable is listed in Millennium → Plugins → Brew Hub, with click-to-copy selectors and a ready-made CSS skeleton
 - Works with any theme and on Windows and Linux
 
 ## Install
@@ -27,7 +28,7 @@ To add or fix a language, edit the `LOCALES` block near the top of `frontend/ind
 > [!IMPORTANT]
 > Millennium has no way to add settings tabs, so Brew Hub patches Millennium's settings page to insert its own, and it calls Millennium's internal installer functions. A Millennium update can change either. If the tab is missing, run `__brewhub.status()` in the Steam UI console and include the result in your bug report.
 
-- Needs Millennium 3.6.3 or newer.
+- Needs Millennium 3.6.2 or newer.
 - The lists come from steambrew.app (`/api/v2` for themes, `/api/v1/plugins` for plugins). Steam's UI cannot read them directly (no CORS header), so the plugin's backend fetches them. The site sometimes times out; **Refresh** tries again.
 - READMEs are drawn as plain elements, never as raw HTML: scripts, styles, frames and event handlers are dropped. Images are loaded from where the README points (GitHub, imgur, shields.io), like on the site.
 - Plugins whose latest build fails on steambrew.app cannot be installed, same as in Millennium's own installer.
