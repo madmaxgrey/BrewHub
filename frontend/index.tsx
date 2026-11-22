@@ -884,8 +884,8 @@ async function withRetry(run, tries) {
   }
   throw last;
 }
-const listFromSite = kind => withRetry(() => fromBackend(backend.sf_list(kind)), 3);
-const getFromSite = path => withRetry(() => fromBackend(backend.sf_get(path)), 2);
+const listFromSite = kind => withRetry(() => fromBackend(backend.bh_list(kind)), 3);
+const getFromSite = path => withRetry(() => fromBackend(backend.bh_get(path)), 2);
 
 const num = v => (typeof v === 'number' && isFinite(v) ? v : 0);
 const isUrl = v => typeof v === 'string' && /^https?:\/\//i.test(v);
@@ -990,7 +990,7 @@ function friendlyStatus(raw) {
 }
 
 
-const countDownload = (kind, id) => { try { Promise.resolve(backend.sf_get('/api/bump/' + kind + '/' + id)).catch(() => {}); } catch (e) { /* the counter is optional */ } };
+const countDownload = (kind, id) => { try { Promise.resolve(backend.bh_get('/api/bump/' + kind + '/' + id)).catch(() => {}); } catch (e) { /* the counter is optional */ } };
 
 async function runInstall(item, key, start, probe, afterOk) {
   setOp(key, { state: 'working', status: t('statusStarting'), progress: 0, msg: '' });
@@ -1100,7 +1100,7 @@ const repoUrl = item => (item.owner && item.repo ? 'https://github.com/' + item.
 
 async function githubReadme(owner, repo) {
   if (!owner || !repo) return '';
-  const res = await withRetry(() => fromBackend(backend.sf_readme(owner, repo)), 2);
+  const res = await withRetry(() => fromBackend(backend.bh_readme(owner, repo)), 2);
   return res && typeof res.text === 'string' ? res.text : '';
 }
 
@@ -1632,14 +1632,14 @@ function toReact(node, ctx, key) {
   switch (tag) {
     case 'a': {
       const url = resolveUrl(a.href, ctx, false);
-      if (url) { props.className = 'sf-link'; props.title = a.title || url; props.onClick = () => openUrl(url); }
+      if (url) { props.className = 'bh-link'; props.title = a.title || url; props.onClick = () => openUrl(url); }
       return h('span', props, ...kids());
     }
     case 'img': {
       const url = resolveUrl(a.src, ctx, true);
       if (!url) return a.alt ? h('span', props, a.alt) : null;
       const w = dim(a.width), hh = dim(a.height);
-      props.className = 'sf-mdimg'; props.src = url; props.alt = a.alt || ''; props.loading = 'lazy';
+      props.className = 'bh-mdimg'; props.src = url; props.alt = a.alt || ''; props.loading = 'lazy';
       if (a.title) props.title = a.title;
       if (w !== undefined || hh !== undefined) props.style = Object.assign({}, props.style, w !== undefined ? { width: w } : null, hh !== undefined ? { height: hh } : null);
       props.onError = e => { try { e.target.style.display = 'none'; } catch (x) { /* ignore */ } };
@@ -1647,7 +1647,7 @@ function toReact(node, ctx, key) {
     }
     case 'input':
       if (String(a.type || '').toLowerCase() !== 'checkbox') return null;
-      props.type = 'checkbox'; props.disabled = true; props.readOnly = true; props.checked = a.checked !== undefined; props.className = 'sf-check';
+      props.type = 'checkbox'; props.disabled = true; props.readOnly = true; props.checked = a.checked !== undefined; props.className = 'bh-check';
       return h('input', props);
     case 'br': case 'hr': return h(tag, props);
     case 'td': case 'th': {
@@ -1658,7 +1658,7 @@ function toReact(node, ctx, key) {
     }
     case 'ol': { const st = parseInt(a.start, 10); if (isFinite(st)) props.start = st; return h('ol', props, ...kids()); }
     case 'details': if (a.open !== undefined) props.open = true; return h('details', props, ...kids());
-    case 'table': return h('div', { key, className: 'sf-tablewrap' }, h('table', null, ...kids()));
+    case 'table': return h('div', { key, className: 'bh-tablewrap' }, h('table', null, ...kids()));
     case 'abbr': if (a.title) props.title = a.title; return h('abbr', props, ...kids());
     default: return h(tag, props, ...kids());
   }
@@ -1672,94 +1672,94 @@ function renderMarkdown(src, ctx) {
 /* ═════════════ the tab ═════════════ */
 
 const CSS = `
-.sf-root{display:flex;flex-direction:column;gap:10px;padding:0 2px 24px;white-space:normal;
-  --sf-r:var(--st-border-radius,var(--minimal_dark_corner,0px));
-  --sf-card-s:rgb(var(--st-color-2));--sf-field-s:rgb(var(--st-color-3));--sf-hover-s:rgb(var(--st-color-4));--sf-line-s:rgb(var(--st-color-5));--sf-accent-s:rgb(var(--st-accent-1));
-  --sf-card:var(--sf-card-s,var(--minimal_dark_black,color-mix(in srgb,currentColor 7%,transparent)));
-  --sf-field:var(--sf-field-s,var(--minimal_dark_blacker,color-mix(in srgb,currentColor 9%,transparent)));
-  --sf-hover:var(--sf-hover-s,var(--minimal_dark_be_grey,color-mix(in srgb,currentColor 15%,transparent)));
-  --sf-line:var(--sf-line-s,var(--minimal_dark_greyblack,color-mix(in srgb,currentColor 18%,transparent)));
-  --sf-accent:var(--sf-accent-s,var(--minimal_dark_color,currentColor));
-  --sf-menu:var(--sf-card-s,var(--minimal_dark_blacker,#23262e))}
-.sf-bar1,.sf-bar2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
-.sf-grow{flex:1 1 auto}
-.sf-tab,.sf-pill{cursor:pointer;user-select:none;font-size:13px;line-height:1;padding:8px 14px;border-radius:var(--sf-r);border:1px solid transparent;background:var(--sf-field);white-space:nowrap}
-.sf-pill{padding:7px 12px;font-size:12px}
-.sf-tab:hover,.sf-pill:hover{background:var(--sf-hover)}
-.sf-tab.sf-on,.sf-pill.sf-on{background:var(--sf-hover);border-color:var(--sf-accent)}
-.sf-pills{display:flex;gap:6px;flex-wrap:wrap}
-.sf-filter{position:relative;width:170px;height:32px;flex:none}
-.sf-search{position:relative;width:240px;height:32px;flex:none}
-.sf-search .sf-input{width:100%;padding-left:34px}
-.sf-searchicon{position:absolute;left:11px;top:8px;width:16px;height:16px;opacity:.7;pointer-events:none}
-.sf-input{display:block;box-sizing:border-box;height:32px;margin:0;padding:0 10px;border-radius:var(--sf-r);border:1px solid var(--sf-line);background:var(--sf-field);color:inherit;font-size:13px;line-height:30px;outline:none}
-.sf-input:focus{border-color:var(--sf-accent)}
-.sf-select{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;cursor:pointer;user-select:none;line-height:1}
-.sf-select:hover{background:var(--sf-hover)}
-.sf-selval{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sf-chev{flex:none;width:12px;height:12px;opacity:.7}
-.sf-menu{position:absolute;top:34px;left:0;right:0;z-index:60;max-height:320px;overflow-y:auto;background:var(--sf-menu);border:1px solid var(--sf-line);border-radius:var(--sf-r)}
-.sf-opt{padding:8px 10px;font-size:13px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sf-opt:hover{background:var(--sf-hover)}
-.sf-opt.sf-on{border-left:3px solid var(--sf-accent);padding-left:7px}
-.sf-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;align-content:start}
-.sf-card{display:flex;flex-direction:column;border-radius:var(--sf-r);overflow:hidden;background:var(--sf-card);border:1px solid var(--sf-line)}
-.sf-img{height:120px;flex:none;background-color:var(--sf-field);background-size:cover;background-position:center}
-.sf-body{display:flex;flex-direction:column;gap:5px;padding:10px 12px 12px;flex:1 1 auto;min-width:0}
-.sf-name{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sf-meta{font-size:12px;opacity:.7}
-.sf-desc{font-size:13px;opacity:.85;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:3.9em}
-.sf-tags{display:flex;gap:4px;flex-wrap:wrap}
-.sf-tag{font-size:11px;padding:1px 6px;border-radius:var(--sf-r);background:var(--sf-field)}
-.sf-clickable{cursor:pointer}
-.sf-foot{margin-top:auto;display:flex;gap:6px;align-items:flex-start;padding-top:6px}
-.sf-act{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
-.sf-btn{box-sizing:border-box !important;width:100% !important;min-width:0 !important;max-width:100% !important;height:32px !important;min-height:0 !important;margin:0 !important;padding:0 12px !important;line-height:1 !important;font-size:13px !important;display:flex !important;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
-.sf-foot>.sf-btn{flex:0 0 84px;width:84px !important}
-.sf-bar{height:3px;background:var(--sf-field);overflow:hidden}
-.sf-fill{height:100%;background:var(--sf-accent);transition:width .2s}
-.sf-err{font-size:12px;color:#e8745a;word-break:break-word}
-.sf-empty{padding:40px 0;text-align:center;opacity:.7}
-.sf-detail{display:flex;flex-direction:column;gap:12px}
-.sf-dmain{display:flex;gap:16px;align-items:flex-start}
-.sf-dhero{flex:0 0 320px;width:320px;max-height:190px;object-fit:cover;border-radius:var(--sf-r)}
-.sf-dinfo{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}
-.sf-dhead{display:flex;align-items:center;gap:12px;min-width:0}
-.sf-dhead .sf-btn{flex:none;width:auto !important;padding:0 14px !important}
-.sf-dtitle{font-size:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.sf-dactions{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
-.sf-dactions .sf-act{flex:none;width:150px}
-.sf-dactions>.sf-btn{width:auto !important;padding:0 14px !important}
-.sf-chips{display:flex;gap:6px;flex-wrap:wrap}
-.sf-chip{font-size:12px;padding:3px 9px;border-radius:var(--sf-r);background:var(--sf-field)}
-.sf-chip b{font-weight:500;opacity:.65;margin-right:5px}
-.sf-readme{padding:12px 16px;border-radius:var(--sf-r);background:var(--sf-card);font-size:13px;line-height:1.55;overflow-wrap:anywhere}
-.sf-md p{margin:0 0 10px}.sf-md h1,.sf-md h2,.sf-md h3,.sf-md h4,.sf-md h5,.sf-md h6{font-weight:600;margin:16px 0 8px;line-height:1.3}
-.sf-md h1{font-size:20px}.sf-md h2{font-size:17px}.sf-md h3{font-size:15px}.sf-md h4,.sf-md h5,.sf-md h6{font-size:13px}
-.sf-md>:first-child{margin-top:0}
-.sf-md ul,.sf-md ol{margin:0 0 10px;padding-left:24px;list-style-position:outside}.sf-md ul{list-style-type:disc}.sf-md ol{list-style-type:decimal}.sf-md li{display:list-item;margin:2px 0}.sf-md li>p{margin:0 0 6px}.sf-md li>p:last-child{margin-bottom:0}
-.sf-md blockquote{margin:0 0 10px;padding:2px 12px;border-left:3px solid var(--sf-line);opacity:.9}
-.sf-md pre{margin:0 0 10px;padding:8px 10px;border-radius:var(--sf-r);background:var(--sf-field);overflow-x:auto;white-space:pre;font-size:12px}
-.sf-md code{padding:0 4px;border-radius:var(--sf-r);background:var(--sf-field);font-size:12px}
-.sf-md pre code{padding:0;background:none}
-.sf-md kbd{padding:0 5px;border-radius:var(--sf-r);border:1px solid var(--sf-line);font-size:12px}
-.sf-md hr{border:0;border-top:1px solid var(--sf-line);margin:14px 0}
-.sf-md .sf-mdimg{max-width:100%;vertical-align:middle}
-.sf-md .sf-tablewrap{overflow-x:auto;margin:0 0 10px}
-.sf-md table{border-collapse:collapse}
-.sf-md th,.sf-md td{border:1px solid var(--sf-line);padding:5px 10px;text-align:left;vertical-align:top}
-.sf-md th{background:var(--sf-field);font-weight:600}
-.sf-md details{margin:0 0 8px;border:1px solid var(--sf-line);border-radius:var(--sf-r);background:var(--sf-field)}
-.sf-md details>*:not(summary){margin-left:12px;margin-right:12px}
-.sf-md details>summary+*{margin-top:10px}
-.sf-md summary{cursor:pointer;padding:8px 12px;font-weight:600;list-style-position:inside;margin:0}
-.sf-md details[open]>summary{border-bottom:1px solid var(--sf-line);margin-bottom:0}
-.sf-md .sf-check{margin-right:6px;vertical-align:middle}
-.sf-link{text-decoration:underline;cursor:pointer;opacity:.95}
-@media (max-width:900px){.sf-dmain{flex-direction:column}.sf-dhero{width:100%;flex-basis:auto}}
+.bh-root{display:flex;flex-direction:column;gap:10px;padding:0 2px 24px;white-space:normal;
+  --bh-r:var(--st-border-radius,var(--minimal_dark_corner,0px));
+  --bh-card-s:rgb(var(--st-color-2));--bh-field-s:rgb(var(--st-color-3));--bh-hover-s:rgb(var(--st-color-4));--bh-line-s:rgb(var(--st-color-5));--bh-accent-s:rgb(var(--st-accent-1));
+  --bh-card:var(--bh-card-s,var(--minimal_dark_black,color-mix(in srgb,currentColor 7%,transparent)));
+  --bh-field:var(--bh-field-s,var(--minimal_dark_blacker,color-mix(in srgb,currentColor 9%,transparent)));
+  --bh-hover:var(--bh-hover-s,var(--minimal_dark_be_grey,color-mix(in srgb,currentColor 15%,transparent)));
+  --bh-line:var(--bh-line-s,var(--minimal_dark_greyblack,color-mix(in srgb,currentColor 18%,transparent)));
+  --bh-accent:var(--bh-accent-s,var(--minimal_dark_color,currentColor));
+  --bh-menu:var(--bh-card-s,var(--minimal_dark_blacker,#23262e))}
+.bh-bar1,.bh-bar2{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.bh-grow{flex:1 1 auto}
+.bh-tab,.bh-pill{cursor:pointer;user-select:none;font-size:13px;line-height:1;padding:8px 14px;border-radius:var(--bh-r);border:1px solid transparent;background:var(--bh-field);white-space:nowrap}
+.bh-pill{padding:7px 12px;font-size:12px}
+.bh-tab:hover,.bh-pill:hover{background:var(--bh-hover)}
+.bh-tab.bh-on,.bh-pill.bh-on{background:var(--bh-hover);border-color:var(--bh-accent)}
+.bh-pills{display:flex;gap:6px;flex-wrap:wrap}
+.bh-filter{position:relative;width:170px;height:32px;flex:none}
+.bh-search{position:relative;width:240px;height:32px;flex:none}
+.bh-search .bh-input{width:100%;padding-left:34px}
+.bh-searchicon{position:absolute;left:11px;top:8px;width:16px;height:16px;opacity:.7;pointer-events:none}
+.bh-input{display:block;box-sizing:border-box;height:32px;margin:0;padding:0 10px;border-radius:var(--bh-r);border:1px solid var(--bh-line);background:var(--bh-field);color:inherit;font-size:13px;line-height:30px;outline:none}
+.bh-input:focus{border-color:var(--bh-accent)}
+.bh-select{display:flex;align-items:center;justify-content:space-between;gap:8px;width:100%;cursor:pointer;user-select:none;line-height:1}
+.bh-select:hover{background:var(--bh-hover)}
+.bh-selval{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bh-chev{flex:none;width:12px;height:12px;opacity:.7}
+.bh-menu{position:absolute;top:34px;left:0;right:0;z-index:60;max-height:320px;overflow-y:auto;background:var(--bh-menu);border:1px solid var(--bh-line);border-radius:var(--bh-r)}
+.bh-opt{padding:8px 10px;font-size:13px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bh-opt:hover{background:var(--bh-hover)}
+.bh-opt.bh-on{border-left:3px solid var(--bh-accent);padding-left:7px}
+.bh-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px;align-content:start}
+.bh-card{display:flex;flex-direction:column;border-radius:var(--bh-r);overflow:hidden;background:var(--bh-card);border:1px solid var(--bh-line)}
+.bh-img{height:120px;flex:none;background-color:var(--bh-field);background-size:cover;background-position:center}
+.bh-body{display:flex;flex-direction:column;gap:5px;padding:10px 12px 12px;flex:1 1 auto;min-width:0}
+.bh-name{font-size:15px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bh-meta{font-size:12px;opacity:.7}
+.bh-desc{font-size:13px;opacity:.85;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden;min-height:3.9em}
+.bh-tags{display:flex;gap:4px;flex-wrap:wrap}
+.bh-tag{font-size:11px;padding:1px 6px;border-radius:var(--bh-r);background:var(--bh-field)}
+.bh-clickable{cursor:pointer}
+.bh-foot{margin-top:auto;display:flex;gap:6px;align-items:flex-start;padding-top:6px}
+.bh-act{flex:1 1 0;min-width:0;display:flex;flex-direction:column;gap:6px}
+.bh-btn{box-sizing:border-box !important;width:100% !important;min-width:0 !important;max-width:100% !important;height:32px !important;min-height:0 !important;margin:0 !important;padding:0 12px !important;line-height:1 !important;font-size:13px !important;display:flex !important;align-items:center;justify-content:center;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.bh-foot>.bh-btn{flex:0 0 84px;width:84px !important}
+.bh-bar{height:3px;background:var(--bh-field);overflow:hidden}
+.bh-fill{height:100%;background:var(--bh-accent);transition:width .2s}
+.bh-err{font-size:12px;color:#e8745a;word-break:break-word}
+.bh-empty{padding:40px 0;text-align:center;opacity:.7}
+.bh-detail{display:flex;flex-direction:column;gap:12px}
+.bh-dmain{display:flex;gap:16px;align-items:flex-start}
+.bh-dhero{flex:0 0 320px;width:320px;max-height:190px;object-fit:cover;border-radius:var(--bh-r)}
+.bh-dinfo{flex:1 1 auto;min-width:0;display:flex;flex-direction:column;gap:8px}
+.bh-dhead{display:flex;align-items:center;gap:12px;min-width:0}
+.bh-dhead .bh-btn{flex:none;width:auto !important;padding:0 14px !important}
+.bh-dtitle{font-size:20px;font-weight:600;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bh-dactions{display:flex;gap:8px;flex-wrap:wrap;align-items:flex-start}
+.bh-dactions .bh-act{flex:none;width:150px}
+.bh-dactions>.bh-btn{width:auto !important;padding:0 14px !important}
+.bh-chips{display:flex;gap:6px;flex-wrap:wrap}
+.bh-chip{font-size:12px;padding:3px 9px;border-radius:var(--bh-r);background:var(--bh-field)}
+.bh-chip b{font-weight:500;opacity:.65;margin-right:5px}
+.bh-readme{padding:12px 16px;border-radius:var(--bh-r);background:var(--bh-card);font-size:13px;line-height:1.55;overflow-wrap:anywhere}
+.bh-md p{margin:0 0 10px}.bh-md h1,.bh-md h2,.bh-md h3,.bh-md h4,.bh-md h5,.bh-md h6{font-weight:600;margin:16px 0 8px;line-height:1.3}
+.bh-md h1{font-size:20px}.bh-md h2{font-size:17px}.bh-md h3{font-size:15px}.bh-md h4,.bh-md h5,.bh-md h6{font-size:13px}
+.bh-md>:first-child{margin-top:0}
+.bh-md ul,.bh-md ol{margin:0 0 10px;padding-left:24px;list-style-position:outside}.bh-md ul{list-style-type:disc}.bh-md ol{list-style-type:decimal}.bh-md li{display:list-item;margin:2px 0}.bh-md li>p{margin:0 0 6px}.bh-md li>p:last-child{margin-bottom:0}
+.bh-md blockquote{margin:0 0 10px;padding:2px 12px;border-left:3px solid var(--bh-line);opacity:.9}
+.bh-md pre{margin:0 0 10px;padding:8px 10px;border-radius:var(--bh-r);background:var(--bh-field);overflow-x:auto;white-space:pre;font-size:12px}
+.bh-md code{padding:0 4px;border-radius:var(--bh-r);background:var(--bh-field);font-size:12px}
+.bh-md pre code{padding:0;background:none}
+.bh-md kbd{padding:0 5px;border-radius:var(--bh-r);border:1px solid var(--bh-line);font-size:12px}
+.bh-md hr{border:0;border-top:1px solid var(--bh-line);margin:14px 0}
+.bh-md .bh-mdimg{max-width:100%;vertical-align:middle}
+.bh-md .bh-tablewrap{overflow-x:auto;margin:0 0 10px}
+.bh-md table{border-collapse:collapse}
+.bh-md th,.bh-md td{border:1px solid var(--bh-line);padding:5px 10px;text-align:left;vertical-align:top}
+.bh-md th{background:var(--bh-field);font-weight:600}
+.bh-md details{margin:0 0 8px;border:1px solid var(--bh-line);border-radius:var(--bh-r);background:var(--bh-field)}
+.bh-md details>*:not(summary){margin-left:12px;margin-right:12px}
+.bh-md details>summary+*{margin-top:10px}
+.bh-md summary{cursor:pointer;padding:8px 12px;font-weight:600;list-style-position:inside;margin:0}
+.bh-md details[open]>summary{border-bottom:1px solid var(--bh-line);margin-bottom:0}
+.bh-md .bh-check{margin-right:6px;vertical-align:middle}
+.bh-link{text-decoration:underline;cursor:pointer;opacity:.95}
+@media (max-width:900px){.bh-dmain{flex-direction:column}.bh-dhero{width:100%;flex-basis:auto}}
 `;
 
-const Btn = props => h(API.DialogButton || 'button', Object.assign({}, props, { className: 'sf-btn' }));
+const Btn = props => h(API.DialogButton || 'button', Object.assign({}, props, { className: 'bh-btn' }));
 
 const SORTS = [['popular', 'sortPopular'], ['unpopular', 'sortUnpopular'], ['updated', 'sortUpdated'], ['stale', 'sortStale'], ['name', 'sortName']];
 
@@ -1775,14 +1775,14 @@ function Filter(props) {
     return () => { doc.removeEventListener('mousedown', away); doc.removeEventListener('keydown', key); };
   }, [open]);
   const cur = props.options.find(o => o.data === props.value) || props.options[0];
-  return h('div', { className: 'sf-filter', ref: box },
-    h('div', { role: 'button', className: 'sf-input sf-select', onClick: () => setOpen(!open) },
-      h('span', { className: 'sf-selval' }, cur.label),
-      h('svg', { className: 'sf-chev', viewBox: '0 0 12 12', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }, h('path', { d: 'M2 4.5l4 4 4-4' }))),
-    open ? h('div', { className: 'sf-menu' }, props.options.map(o => h('div', { key: o.data, role: 'button', className: 'sf-opt' + (o.data === props.value ? ' sf-on' : ''), onClick: () => { props.onChange(o.data); setOpen(false); } }, o.label))) : null);
+  return h('div', { className: 'bh-filter', ref: box },
+    h('div', { role: 'button', className: 'bh-input bh-select', onClick: () => setOpen(!open) },
+      h('span', { className: 'bh-selval' }, cur.label),
+      h('svg', { className: 'bh-chev', viewBox: '0 0 12 12', fill: 'none', stroke: 'currentColor', strokeWidth: 1.6 }, h('path', { d: 'M2 4.5l4 4 4-4' }))),
+    open ? h('div', { className: 'bh-menu' }, props.options.map(o => h('div', { key: o.data, role: 'button', className: 'bh-opt' + (o.data === props.value ? ' bh-on' : ''), onClick: () => { props.onChange(o.data); setOpen(false); } }, o.label))) : null);
 }
 
-const SEARCH_ICON = () => h('svg', { className: 'sf-searchicon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' }, h('circle', { cx: 10, cy: 10, r: 6.5 }), h('path', { d: 'M15 15l6 6' }));
+const SEARCH_ICON = () => h('svg', { className: 'bh-searchicon', viewBox: '0 0 24 24', fill: 'none', stroke: 'currentColor', strokeWidth: 2.2, strokeLinecap: 'round' }, h('circle', { cx: 10, cy: 10, r: 6.5 }), h('path', { d: 'M15 15l6 6' }));
 
 function itemInfo(item) {
   const inst = store.installed;
@@ -1820,18 +1820,18 @@ function ActionBlock(props) {
   const info = itemInfo(item);
   if (op.state === 'working') {
     const pct = Math.round(op.progress || 0);
-    return h('div', { className: 'sf-act' },
+    return h('div', { className: 'bh-act' },
       h(Btn, { disabled: true }, (op.status || t('installing')) + '… ' + pct + '%'),
-      h('div', { className: 'sf-bar' }, h('div', { className: 'sf-fill', style: { width: Math.max(2, Math.min(100, op.progress || 0)) + '%' } })));
+      h('div', { className: 'bh-bar' }, h('div', { className: 'bh-fill', style: { width: Math.max(2, Math.min(100, op.progress || 0)) + '%' } })));
   }
   if (info && item.kind === 'theme') {
-    return h('div', { className: 'sf-act' }, info.active ? h(Btn, { disabled: true }, t('active')) : h(Btn, { onClick: () => applyTheme(info.native) }, t('useTheme')));
+    return h('div', { className: 'bh-act' }, info.active ? h(Btn, { disabled: true }, t('active')) : h(Btn, { onClick: () => applyTheme(info.native) }, t('useTheme')));
   }
-  if (info) return h('div', { className: 'sf-act' }, info.enabled ? h(Btn, { disabled: true }, t('enabled')) : h(Btn, { onClick: () => enablePlugin(item.folder) }, t('enable')));
-  if (item.buildFailing) return h('div', { className: 'sf-act' }, h(Btn, { disabled: true }, t('buildFailing')));
-  return h('div', { className: 'sf-act' },
+  if (info) return h('div', { className: 'bh-act' }, info.enabled ? h(Btn, { disabled: true }, t('enabled')) : h(Btn, { onClick: () => enablePlugin(item.folder) }, t('enable')));
+  if (item.buildFailing) return h('div', { className: 'bh-act' }, h(Btn, { disabled: true }, t('buildFailing')));
+  return h('div', { className: 'bh-act' },
     h(Btn, { onClick: () => (item.kind === 'theme' ? installTheme(item) : installPlugin(item)) }, op.state === 'error' ? t('retry') : t('install')),
-    op.state === 'error' ? h('div', { className: 'sf-err' }, op.msg) : null);
+    op.state === 'error' ? h('div', { className: 'bh-err' }, op.msg) : null);
 }
 
 function Card(props) {
@@ -1839,16 +1839,16 @@ function Card(props) {
   const open = () => openDetails(item);
   const meta = [t('by', item.author), item.version ? 'v' + item.version : '', item.size].filter(Boolean).join(' · ');
   const stats = [t('downloads', compact(item.downloads)), item.updated ? t('updatedOn', item.updated) : ''].filter(Boolean).join(' · ');
-  return h('div', { className: 'sf-card' },
-    item.image ? h('div', { className: 'sf-img sf-clickable', onClick: open, style: { backgroundImage: 'url("' + encodeURI(item.image) + '")' } }) : null,
-    h('div', { className: 'sf-body' },
-      h('div', { className: 'sf-clickable', onClick: open },
-        h('div', { className: 'sf-name', title: item.name }, item.name),
-        h('div', { className: 'sf-meta' }, meta),
-        h('div', { className: 'sf-desc' }, item.description)),
-      item.tags.length ? h('div', { className: 'sf-tags' }, item.tags.map(tag => h('span', { key: tag, className: 'sf-tag' }, tag))) : null,
-      h('div', { className: 'sf-meta' }, stats),
-      h('div', { className: 'sf-foot' }, h(ActionBlock, { item }), h(Btn, { onClick: open }, t('details')))));
+  return h('div', { className: 'bh-card' },
+    item.image ? h('div', { className: 'bh-img bh-clickable', onClick: open, style: { backgroundImage: 'url("' + encodeURI(item.image) + '")' } }) : null,
+    h('div', { className: 'bh-body' },
+      h('div', { className: 'bh-clickable', onClick: open },
+        h('div', { className: 'bh-name', title: item.name }, item.name),
+        h('div', { className: 'bh-meta' }, meta),
+        h('div', { className: 'bh-desc' }, item.description)),
+      item.tags.length ? h('div', { className: 'bh-tags' }, item.tags.map(tag => h('span', { key: tag, className: 'bh-tag' }, tag))) : null,
+      h('div', { className: 'bh-meta' }, stats),
+      h('div', { className: 'bh-foot' }, h(ActionBlock, { item }), h(Btn, { onClick: open }, t('details')))));
 }
 
 function Details(props) {
@@ -1863,18 +1863,18 @@ function Details(props) {
   ].filter(f => f && f[1]);
   const link = (label, url) => url ? h(Btn, { key: label, onClick: () => openUrl(url) }, label) : null;
   const hero = item.kind === 'theme' && (item.splash || item.image);
-  return h('div', { className: 'sf-detail' },
-    h('div', { className: 'sf-dmain' },
-      hero ? h('img', { className: 'sf-dhero', src: hero, onError: e => { e.target.style.display = 'none'; } }) : null,
-      h('div', { className: 'sf-dinfo' },
-        h('div', { className: 'sf-dhead' }, h(Btn, { onClick: closeDetails }, '‹ ' + t('back')), h('div', { className: 'sf-dtitle', title: item.name }, item.name)),
-        h('div', { className: 'sf-dactions' }, h(ActionBlock, { item }),
+  return h('div', { className: 'bh-detail' },
+    h('div', { className: 'bh-dmain' },
+      hero ? h('img', { className: 'bh-dhero', src: hero, onError: e => { e.target.style.display = 'none'; } }) : null,
+      h('div', { className: 'bh-dinfo' },
+        h('div', { className: 'bh-dhead' }, h(Btn, { onClick: closeDetails }, '‹ ' + t('back')), h('div', { className: 'bh-dtitle', title: item.name }, item.name)),
+        h('div', { className: 'bh-dactions' }, h(ActionBlock, { item }),
           link('steambrew.app', pageUrl(item)), link('GitHub', repoUrl(item)), item.discord ? link('Discord', 'https://discord.gg/' + item.discord) : null),
         item.description ? h('div', null, item.description) : null,
-        h('div', { className: 'sf-chips' }, facts.map(f => h('span', { key: f[0], className: 'sf-chip' }, h('b', null, f[0]), f[1])),
-          item.tags.map(tag => h('span', { key: 'tag' + tag, className: 'sf-chip' }, tag))),
-        item.change ? h('div', { className: 'sf-meta' }, t('latestChange', item.change)) : null)),
-    h('div', { className: 'sf-readme sf-md' }, d.state === 'loading' ? t('loading') : d.text.trim() ? readme : d.note));
+        h('div', { className: 'bh-chips' }, facts.map(f => h('span', { key: f[0], className: 'bh-chip' }, h('b', null, f[0]), f[1])),
+          item.tags.map(tag => h('span', { key: 'tag' + tag, className: 'bh-chip' }, tag))),
+        item.change ? h('div', { className: 'bh-meta' }, t('latestChange', item.change)) : null)),
+    h('div', { className: 'bh-readme bh-md' }, d.state === 'loading' ? t('loading') : d.text.trim() ? readme : d.note));
 }
 
 function BrewHubView() {
@@ -1898,30 +1898,30 @@ function BrewHubView() {
 
   if (store.detail) {
     const open = (store.data[store.detail.kind + 's'].items || []).find(i => i.id === store.detail.id);
-    if (open) return h('div', { className: 'sf-root' }, h('style', null, CSS), h(Details, { item: open }));
+    if (open) return h('div', { className: 'bh-root' }, h('style', null, CSS), h(Details, { item: open }));
     store.detail = null;
   }
 
   const data = store.data[section];
   const shown = arrange(data.items, query, sort, filter);
-  const tab = (id, label) => h('div', { key: id, role: 'button', className: 'sf-tab' + (section === id ? ' sf-on' : ''), onClick: () => pick(id) },
+  const tab = (id, label) => h('div', { key: id, role: 'button', className: 'bh-tab' + (section === id ? ' bh-on' : ''), onClick: () => pick(id) },
     label + (store.data[id].state === 'ready' ? ' (' + store.data[id].items.length + ')' : ''));
 
   let body;
-  if (data.state === 'loading' && !data.items.length) body = h('div', { className: 'sf-empty' }, t('loadingList'));
-  else if (data.state === 'error' && !data.items.length) body = h('div', { className: 'sf-empty' }, h('div', null, t('loadFailed', data.error)), h('div', { style: { marginTop: 12, display: 'inline-block' } }, h(Btn, { onClick: () => load(section, true) }, t('tryAgain'))));
-  else if (!shown.length) body = h('div', { className: 'sf-empty' }, data.state === 'ready' ? t('noMatch') : '');
-  else body = h('div', { className: 'sf-grid' }, shown.map(i => h(Card, { key: i.kind + ':' + i.id, item: i })));
+  if (data.state === 'loading' && !data.items.length) body = h('div', { className: 'bh-empty' }, t('loadingList'));
+  else if (data.state === 'error' && !data.items.length) body = h('div', { className: 'bh-empty' }, h('div', null, t('loadFailed', data.error)), h('div', { style: { marginTop: 12, display: 'inline-block' } }, h(Btn, { onClick: () => load(section, true) }, t('tryAgain'))));
+  else if (!shown.length) body = h('div', { className: 'bh-empty' }, data.state === 'ready' ? t('noMatch') : '');
+  else body = h('div', { className: 'bh-grid' }, shown.map(i => h(Card, { key: i.kind + ':' + i.id, item: i })));
 
-  return h('div', { className: 'sf-root' },
+  return h('div', { className: 'bh-root' },
     h('style', null, CSS),
-    h('div', { className: 'sf-bar1' }, tab('themes', t('tabThemes')), tab('plugins', t('tabPlugins')), h('div', { className: 'sf-grow' }),
+    h('div', { className: 'bh-bar1' }, tab('themes', t('tabThemes')), tab('plugins', t('tabPlugins')), h('div', { className: 'bh-grow' }),
       h('div', { style: { width: 110 } }, h(Btn, { onClick: () => { load(section, true); refreshInstalled(); }, disabled: data.state === 'loading' }, data.state === 'loading' ? t('loading') : t('refresh')))),
-    h('div', { className: 'sf-bar2' },
-      h('div', { className: 'sf-pills' }, SORTS.map(o => h('div', { key: o[0], role: 'button', className: 'sf-pill' + (sort === o[0] ? ' sf-on' : ''), onClick: () => setSort(o[0]) }, t(o[1])))),
-      h('div', { className: 'sf-grow' }),
+    h('div', { className: 'bh-bar2' },
+      h('div', { className: 'bh-pills' }, SORTS.map(o => h('div', { key: o[0], role: 'button', className: 'bh-pill' + (sort === o[0] ? ' bh-on' : ''), onClick: () => setSort(o[0]) }, t(o[1])))),
+      h('div', { className: 'bh-grow' }),
       h(Filter, { options: filterOptions(section, data.items), value: filter, onChange: setFilter }),
-      h('div', { className: 'sf-search' }, h(SEARCH_ICON), h('input', { className: 'sf-input', value: query, placeholder: t('searchPlaceholder'), onChange: e => setQuery(e.target.value) }))),
+      h('div', { className: 'bh-search' }, h(SEARCH_ICON), h('input', { className: 'bh-input', value: query, placeholder: t('searchPlaceholder'), onChange: e => setQuery(e.target.value) }))),
     body);
 }
 
@@ -1930,8 +1930,8 @@ function BrewHubView() {
  * more tabs, so patch the /millennium/settings route: wrap that component and add our page to `pages` after it has rendered. */
 
 // Some themes hide every settings icon and redraw them by route name, so a new route would get none: show ours regardless
-const TAB_ICON_CSS = 'svg.sf-tabicon{display:block !important}';
-const STORE_ICON = () => h('svg', { className: 'sf-tabicon', viewBox: '0 0 24 24', width: 20, height: 20, fill: 'currentColor' }, h('path', { d: 'M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z' }));
+const TAB_ICON_CSS = 'svg.bh-tabicon{display:block !important}';
+const STORE_ICON = () => h('svg', { className: 'bh-tabicon', viewBox: '0 0 24 24', width: 20, height: 20, fill: 'currentColor' }, h('path', { d: 'M20 4H4v2h16V4zm1 10v-2l-1-5H4l-1 5v2h1v6h10v-6h4v6h2v-6h1zm-9 4H6v-4h6v4z' }));
 
 function brewHubPage() {
   const Body = API.DialogBody || 'div';
@@ -1997,16 +1997,442 @@ async function patchSettingsRoute() {
 
 /* ═════════════ the plugin's own settings entry ═════════════ */
 
+/* ═════════════ theming reference (shown in the plugin's settings) ═════════════ */
+
+// every class name and variable Brew Hub uses, for theme authors; the settings page and the CSS skeleton are made from this list.
+// (English only, like the code it describes)
+const CLASS_DOCS = [
+  {
+    "group": "Tab",
+    "blurb": "The Brew Hub page in Millennium's settings",
+    "items": [
+      {
+        "selector": ".bh-root",
+        "about": "Everything inside the tab. The variables below are set on it, so scope your rules with it."
+      },
+      {
+        "selector": ".bh-tabicon",
+        "about": "The tab's icon in the settings sidebar. It carries a rule that keeps it visible even when a theme hides settings icons."
+      },
+      {
+        "selector": ".bh-empty",
+        "about": "The message shown while the list loads, when it cannot load, or when nothing matches."
+      }
+    ]
+  },
+  {
+    "group": "Top bar",
+    "blurb": "The two rows above the list",
+    "items": [
+      {
+        "selector": ".bh-bar1",
+        "about": "First row: the Themes and Plugins tabs and the Refresh button."
+      },
+      {
+        "selector": ".bh-bar2",
+        "about": "Second row: the sort pills on the left, the filter and the search box on the right."
+      },
+      {
+        "selector": ".bh-grow",
+        "about": "The flexible gap that pushes things in a row to the right."
+      },
+      {
+        "selector": ".bh-tab",
+        "about": "The Themes and Plugins tabs. Selected one also has .bh-on."
+      },
+      {
+        "selector": ".bh-pills",
+        "about": "Wrapper of the sort pills."
+      },
+      {
+        "selector": ".bh-pill",
+        "about": "One sort pill (Most downloaded and so on). The current one also has .bh-on."
+      },
+      {
+        "selector": ".bh-on",
+        "about": "Added to the selected tab, the current sort pill and the current filter entry."
+      }
+    ]
+  },
+  {
+    "group": "Filter and search",
+    "blurb": "The controls on the right of the second row",
+    "items": [
+      {
+        "selector": ".bh-filter",
+        "about": "Wrapper of the filter select. Its open list is .bh-menu."
+      },
+      {
+        "selector": ".bh-select",
+        "about": "The select box itself (also has .bh-input). .bh-selval is the shown text and .bh-chev the arrow."
+      },
+      {
+        "selector": ".bh-selval",
+        "about": "The text of the current choice in the select."
+      },
+      {
+        "selector": ".bh-chev",
+        "about": "The arrow icon of the select."
+      },
+      {
+        "selector": ".bh-menu",
+        "about": "The opened list of the filter. Also the name of a variable: see --bh-menu below."
+      },
+      {
+        "selector": ".bh-opt",
+        "about": "One entry in the opened list. The current one also has .bh-on."
+      },
+      {
+        "selector": ".bh-search",
+        "about": "Wrapper of the search box. .bh-searchicon is the magnifier drawn inside it."
+      },
+      {
+        "selector": ".bh-searchicon",
+        "about": "The magnifier icon inside the search box."
+      },
+      {
+        "selector": ".bh-input",
+        "about": "The look shared by the search box and the select: height, border, fill and corners."
+      }
+    ]
+  },
+  {
+    "group": "Cards",
+    "blurb": "The grid of themes or plugins",
+    "items": [
+      {
+        "selector": ".bh-grid",
+        "about": "The grid that holds the cards."
+      },
+      {
+        "selector": ".bh-card",
+        "about": "One theme or plugin."
+      },
+      {
+        "selector": ".bh-img",
+        "about": "The theme's preview image at the top of a card (a background image). Plugins have none."
+      },
+      {
+        "selector": ".bh-body",
+        "about": "Everything under the image: name, author, description, tags, numbers and the buttons."
+      },
+      {
+        "selector": ".bh-name",
+        "about": "The title of a card."
+      },
+      {
+        "selector": ".bh-meta",
+        "about": "Small grey lines: author and version, downloads and update date, and the latest change in the details page."
+      },
+      {
+        "selector": ".bh-desc",
+        "about": "The description, cut after three lines."
+      },
+      {
+        "selector": ".bh-tags",
+        "about": "Wrapper of a theme's tags."
+      },
+      {
+        "selector": ".bh-tag",
+        "about": "One tag."
+      },
+      {
+        "selector": ".bh-clickable",
+        "about": "Added to the image, title and description of a card: the parts that open the details."
+      },
+      {
+        "selector": ".bh-foot",
+        "about": "The row at the bottom of a card: the main button and Details."
+      },
+      {
+        "selector": ".bh-act",
+        "about": "The main button of an item (Install, Use theme, Enable) with its progress bar underneath."
+      },
+      {
+        "selector": ".bh-btn",
+        "about": "Brew Hub's own buttons. They are Steam's DialogButton, so a theme already styles them; this class only sets the size."
+      },
+      {
+        "selector": ".bh-bar",
+        "about": "The track of the install progress bar."
+      },
+      {
+        "selector": ".bh-fill",
+        "about": "The filled part of the install progress bar. Uses --bh-accent."
+      },
+      {
+        "selector": ".bh-err",
+        "about": "The error text under the button when an install fails."
+      }
+    ]
+  },
+  {
+    "group": "Details page",
+    "blurb": "What opens when you click a card",
+    "items": [
+      {
+        "selector": ".bh-detail",
+        "about": "The whole details page."
+      },
+      {
+        "selector": ".bh-dmain",
+        "about": "The top part: the preview image (themes) next to the information."
+      },
+      {
+        "selector": ".bh-dhero",
+        "about": "The large preview image of a theme."
+      },
+      {
+        "selector": ".bh-dinfo",
+        "about": "Everything next to the image: title, buttons, description and chips."
+      },
+      {
+        "selector": ".bh-dhead",
+        "about": "The row with the Back button and the title."
+      },
+      {
+        "selector": ".bh-dtitle",
+        "about": "The title of the theme or plugin."
+      },
+      {
+        "selector": ".bh-dactions",
+        "about": "The row of buttons: Install or Use theme, steambrew.app, GitHub and Discord."
+      },
+      {
+        "selector": ".bh-chips",
+        "about": "Wrapper of the small fact labels (author, version, downloads and so on)."
+      },
+      {
+        "selector": ".bh-chip",
+        "about": "One fact label, also used for a theme's tags in the details page."
+      }
+    ]
+  },
+  {
+    "group": "README",
+    "blurb": "The README shown on the details page",
+    "items": [
+      {
+        "selector": ".bh-readme",
+        "about": "The box around the README."
+      },
+      {
+        "selector": ".bh-md",
+        "about": "The rendered README. It holds plain elements (h1 to h6, p, ul, ol, table, pre, code, details and so on), so style those inside it."
+      },
+      {
+        "selector": ".bh-mdimg",
+        "about": "Images in the README."
+      },
+      {
+        "selector": ".bh-tablewrap",
+        "about": "Wrapper around each README table, so wide tables scroll sideways."
+      },
+      {
+        "selector": ".bh-check",
+        "about": "The checkbox of a task list item in a README."
+      },
+      {
+        "selector": ".bh-link",
+        "about": "A link in a README. It opens in your system browser."
+      }
+    ]
+  },
+  {
+    "group": "Variables set on .bh-root",
+    "blurb": "Custom properties a theme can override",
+    "items": [
+      {
+        "selector": "--bh-r",
+        "about": "Corner radius of cards, fields, tabs, pills and tags. 0 normally, so it is square like Steam; it follows the theme's radius when the theme exposes one (SpaceTheme, Minimal Dark)."
+      },
+      {
+        "selector": "--bh-card",
+        "about": "Fill of cards and of the README box."
+      },
+      {
+        "selector": "--bh-field",
+        "about": "Fill of tabs, pills, tags, chips, the search box and the select."
+      },
+      {
+        "selector": "--bh-hover",
+        "about": "Fill when hovering, and of the selected tab, pill and entry."
+      },
+      {
+        "selector": "--bh-line",
+        "about": "Border colour of cards, the search box, the select and tables."
+      },
+      {
+        "selector": "--bh-accent",
+        "about": "Accent: the border of the selected tab and pill, the install progress and the current entry in the open list."
+      },
+      {
+        "selector": "--bh-menu",
+        "about": "Background of the opened filter list. Has to be an opaque colour."
+      },
+      {
+        "selector": "--bh-card-s",
+        "about": "Internal: the card colour as read from SpaceTheme (--st-color-2). Override --bh-card instead."
+      },
+      {
+        "selector": "--bh-field-s",
+        "about": "Internal: the field colour as read from SpaceTheme (--st-color-3). Override --bh-field instead."
+      },
+      {
+        "selector": "--bh-hover-s",
+        "about": "Internal: the hover colour as read from SpaceTheme (--st-color-4). Override --bh-hover instead."
+      },
+      {
+        "selector": "--bh-line-s",
+        "about": "Internal: the border colour as read from SpaceTheme (--st-color-5). Override --bh-line instead."
+      },
+      {
+        "selector": "--bh-accent-s",
+        "about": "Internal: the accent as read from SpaceTheme (--st-accent-1). Override --bh-accent instead."
+      }
+    ]
+  }
+];
+
+function cssSkeleton() {
+  const lines = ["/* Brew Hub: all selectors, ready to fill in. Put the rules in your theme's CSS. */", ''];
+  for (const g of CLASS_DOCS) {
+    lines.push('/* ' + g.group + ' */');
+    for (const it of g.items) {
+      lines.push('/* ' + it.about + ' */');
+      lines.push(it.selector.startsWith('--') ? '.bh-root { ' + it.selector + ': ; }' : it.selector + ' { }');
+    }
+    lines.push('');
+  }
+  return lines.join('\n');
+}
+
+// Copies text to the clipboard from the window that was clicked (a window without focus is refused): the clipboard API first,
+// the old copy command second.
+function copyText(text, doc) {
+  const d = doc || (typeof document !== 'undefined' ? document : null);
+  if (!d) return Promise.reject(new Error('no document to copy from'));
+  const view = d.defaultView || window;
+  const viaApi = () => (view.navigator.clipboard && view.navigator.clipboard.writeText ? view.navigator.clipboard.writeText(text) : Promise.reject(new Error('no clipboard api')));
+  const viaCommand = () => new Promise((resolve, reject) => {
+    try {
+      const box = d.createElement('textarea');
+      box.value = text; box.setAttribute('readonly', '');
+      box.style.position = 'fixed'; box.style.top = '0'; box.style.left = '0'; box.style.opacity = '0';
+      d.body.appendChild(box); box.focus(); box.select();
+      const ok = d.execCommand('copy');
+      box.remove();
+      ok ? resolve() : reject(new Error('copy refused'));
+    } catch (e) { reject(e); }
+  });
+  let first;
+  try { first = viaApi(); } catch (e) { first = Promise.reject(e); }
+  return first.catch(() => viaCommand());
+}
+
+const SETTINGS_CSS = `
+.bhd-wrap{box-sizing:border-box;max-width:100%;overflow-x:hidden;--bhd-r:var(--st-border-radius,var(--minimal_dark_corner,0px));white-space:normal}
+.bhd-wrap .bhd-sections{margin-top:18px;padding-top:2px}
+.bhd-wrap .bhd-section{margin:0 0 10px;border:1px solid color-mix(in srgb,currentColor 16%,transparent);border-radius:var(--bhd-r);overflow:hidden;background:color-mix(in srgb,currentColor 4%,transparent)}
+.bhd-wrap .bhd-head{display:flex;align-items:center;gap:12px;margin:0;padding:12px 14px;cursor:pointer;user-select:none}
+.bhd-wrap .bhd-head:hover{background:color-mix(in srgb,currentColor 8%,transparent)}
+.bhd-wrap .bhd-chev{flex:none;display:flex;transition:transform .2s ease}
+.bhd-wrap .bhd-chev.bhd-open{transform:rotate(90deg)}
+.bhd-wrap .bhd-titles{flex:1 1 auto;min-width:0}
+.bhd-wrap .bhd-name{font-size:15px;font-weight:600;line-height:20px}
+.bhd-wrap .bhd-blurb{margin-top:1px;font-size:12px;font-weight:400;line-height:16px;opacity:.65}
+.bhd-wrap .bhd-pill{flex:none;font-size:11px;font-weight:600;line-height:16px;padding:1px 9px;border-radius:var(--bhd-r);background:color-mix(in srgb,currentColor 16%,transparent)}
+.bhd-wrap .bhd-collapse{display:grid;grid-template-rows:0fr;transition:grid-template-rows .22s ease}
+.bhd-wrap .bhd-collapse.bhd-open{grid-template-rows:1fr}
+.bhd-wrap .bhd-inner{overflow:hidden;min-height:0}
+.bhd-wrap .bhd-item{display:flex;align-items:flex-start;gap:12px;padding:10px 14px;border-top:1px solid color-mix(in srgb,currentColor 12%,transparent)}
+.bhd-wrap .bhd-text{flex:1 1 auto;min-width:0}
+.bhd-wrap .bhd-sel{display:inline-block;max-width:100%;padding:2px 8px;border-radius:var(--bhd-r);background:color-mix(in srgb,currentColor 14%,transparent);font-family:Consolas,"Courier New",monospace;font-size:12.5px;line-height:18px;cursor:pointer;word-break:break-all}
+.bhd-wrap .bhd-desc{margin-top:6px;font-size:12.5px;font-weight:400;line-height:1.45;opacity:.75}
+.bhd-wrap .bhd-copy{flex:none;align-self:center;padding:3px 10px;border-radius:var(--bhd-r);border:1px solid color-mix(in srgb,currentColor 28%,transparent);font-size:11px;line-height:16px;cursor:pointer;user-select:none}
+.bhd-wrap .bhd-copy:hover{background:color-mix(in srgb,currentColor 14%,transparent)}
+.bhd-wrap.bhd-narrow .bhd-item{flex-direction:column;gap:8px;padding:10px 12px}
+.bhd-wrap.bhd-narrow .bhd-copy{align-self:flex-start}
+.bhd-wrap.bhd-narrow .bhd-head{padding:10px 12px}
+`;
+
 function SettingsPanel() {
   const [notify, setNotifyState] = React.useState(settings.notify);
+  const [open, setOpen] = React.useState({}); // group name -> expanded; every section starts collapsed
+  const [copied, setCopied] = React.useState('');
+  const [manual, setManual] = React.useState(''); // text to copy by hand when the clipboard refuses
+  // the settings pane can be narrow: below about 560 px the buttons go under the text and the rows stack
+  const wrapRef = React.useRef(null);
+  const [narrow, setNarrow] = React.useState(false);
+  React.useEffect(() => {
+    const el = wrapRef.current;
+    if (!el || !el.ownerDocument || !el.ownerDocument.defaultView) return undefined;
+    const view = el.ownerDocument.defaultView;
+    const measure = () => setNarrow(el.clientWidth > 0 && el.clientWidth < 560);
+    measure();
+    if (!view.ResizeObserver) return undefined;
+    const watcher = new view.ResizeObserver(measure);
+    watcher.observe(el);
+    return () => watcher.disconnect();
+  }, []);
+
   const Toggle = API.ToggleField;
-  const open = () => { try { API.Navigation.Navigate(PAGE_ROUTE); } catch (e) { log('could not open the tab', e); } };
-  return h('div', { style: { padding: 16 } },
+  const Btn = API.DialogButton || 'button';
+  const small = { flex: 'none', width: 'auto', whiteSpace: 'nowrap', padding: '0 14px' };
+  const layout = narrow ? 'below' : 'inline';
+  const goTo = () => { try { API.Navigation.Navigate(PAGE_ROUTE); } catch (e) { log('could not open the tab', e); } };
+  const copy = (text, what, event) => {
+    let doc;
+    try { doc = event && event.currentTarget && event.currentTarget.ownerDocument; } catch (e) { doc = undefined; }
+    copyText(text, doc).then(() => { setManual(''); setCopied(what); }, () => { setManual(text); setCopied(''); });
+    setTimeout(() => setCopied(''), 2500);
+  };
+  const toggle = name => setOpen(prev => Object.assign({}, prev, { [name]: !prev[name] }));
+  const setAll = value => setOpen(() => Object.fromEntries(CLASS_DOCS.map(g => [g.group, value])));
+  const row = (key, props, child) => (API.Field
+    ? h(API.Field, Object.assign({ key, childrenLayout: layout }, props), child)
+    : h('div', { key, style: { margin: '10px 0' } }, h('div', { style: { fontWeight: 600 } }, props.label), props.description ? h('div', { style: { opacity: 0.75, fontSize: 13 } }, props.description) : null, child));
+
+  const top = [
     Toggle
-      ? h(Toggle, { label: t('setNotifyLabel'), description: t('setNotifyDesc'), checked: notify, onChange: v => { setNotify(v); setNotifyState(!!v); } })
-      : h('label', null, h('input', { type: 'checkbox', checked: notify, onChange: e => { setNotify(e.target.checked); setNotifyState(e.target.checked); } }), ' ' + t('setNotifyLabel')),
-    h('div', { style: { margin: '16px 0 12px' } }, t('setIntro')),
-    h(API.DialogButton || 'button', { onClick: open, style: { width: 'auto', minWidth: 0, padding: '6px 16px' } }, t('setOpen')));
+      ? h(Toggle, { key: 'notify', label: t('setNotifyLabel'), description: t('setNotifyDesc'), checked: notify, onChange: v => { setNotify(v); setNotifyState(!!v); } })
+      : h('label', { key: 'notify' }, h('input', { type: 'checkbox', checked: notify, onChange: e => { setNotify(e.target.checked); setNotifyState(e.target.checked); } }), ' ' + t('setNotifyLabel')),
+    row('intro', { label: 'Brew Hub', description: t('setIntro') }, h(Btn, { onClick: goTo, style: small }, t('setOpen'))),
+    row('theming', { label: 'Theming Brew Hub', description: "Brew Hub is made from Steam's own buttons and plain elements, so most themes need nothing extra. To refine it, use the class names below. Click a selector to copy it." }, null),
+    row('copyall', { label: 'CSS skeleton', description: 'Every selector below with an empty rule and a comment, ready to paste into your theme.' }, h(Btn, { onClick: e => copy(cssSkeleton(), 'CSS skeleton copied', e), style: small }, 'Copy CSS')),
+    row('tip', { label: 'Tip', description: "Scope your rules with .bh-root so they only affect Brew Hub. Open the tab, then use Steam's DevTools to inspect it." }, null),
+    row('sections', { label: 'Class names', description: 'Open a section to see its class names.' },
+      h('div', { style: { display: 'flex', flexWrap: 'wrap', gap: 8 } },
+        h(Btn, { onClick: () => setAll(true), style: small }, 'Expand all'),
+        h(Btn, { onClick: () => setAll(false), style: small }, 'Collapse all'))),
+  ];
+
+  // Steam's own section classes (the ones its Properties window and Millennium's settings use), so a theme styles the headings
+  const sections = CLASS_DOCS.map(g => {
+    const isOpen = !!open[g.group];
+    return h('div', { key: 'g-' + g.group, className: 'DialogControlsSection bhd-section' },
+      h('div', { className: 'SettingsDialogSubHeader bhd-head', role: 'button', 'aria-expanded': isOpen, onClick: () => toggle(g.group) },
+        h('span', { className: 'bhd-chev' + (isOpen ? ' bhd-open' : '') },
+          h('svg', { viewBox: '0 0 16 16', width: 14, height: 14 }, h('path', { d: 'M6 3l5 5-5 5', fill: 'none', stroke: 'currentColor', strokeWidth: 2, strokeLinecap: 'round', strokeLinejoin: 'round' }))),
+        h('div', { className: 'bhd-titles' }, h('div', { className: 'bhd-name' }, g.group), g.blurb ? h('div', { className: 'bhd-blurb' }, g.blurb) : null),
+        h('span', { className: 'bhd-pill' }, String(g.items.length))),
+      h('div', { className: 'bhd-collapse' + (isOpen ? ' bhd-open' : ''), 'aria-hidden': !isOpen },
+        h('div', { className: 'bhd-inner' },
+          g.items.map(it => h('div', { key: it.selector, className: 'bhd-item' },
+            h('div', { className: 'bhd-text' },
+              h('span', { className: 'bhd-sel', title: 'Click to copy', onClick: e => copy(it.selector, it.selector + ' copied', e) }, it.selector),
+              h('div', { className: 'bhd-desc' }, it.about)),
+            h('span', { className: 'bhd-copy', role: 'button', onClick: e => copy(it.selector, it.selector + ' copied', e) }, 'Copy'))))));
+  });
+
+  return h('div', { ref: wrapRef, className: 'bhd-wrap' + (narrow ? ' bhd-narrow' : ''), style: { padding: 16, paddingBottom: 24 } },
+    h('style', null, SETTINGS_CSS),
+    copied ? h('div', { style: { position: 'sticky', top: 0, zIndex: 2, padding: '6px 12px', background: 'rgba(0,0,0,.65)', color: '#8fcf5a', fontSize: 13 } }, copied) : null,
+    manual ? h('div', { style: { margin: '8px 0 12px', padding: 12, background: 'rgba(0,0,0,.35)' } },
+      h('div', { style: { marginBottom: 8, fontSize: 13 } }, 'Steam did not allow copying automatically. The text is selected: press Ctrl+C to copy it.'),
+      h('textarea', { readOnly: true, value: manual, rows: Math.min(10, manual.split('\n').length + 1), ref: el => { if (el) { el.focus(); el.select(); } }, onFocus: e => e.target.select(), style: { width: '100%', boxSizing: 'border-box', fontFamily: 'Consolas, "Courier New", monospace', fontSize: 12, background: 'rgba(0,0,0,.4)', color: 'inherit', border: '1px solid rgba(255,255,255,.2)', padding: 8 } }),
+      h('div', { style: { marginTop: 8 } }, h(Btn, { onClick: () => setManual(''), style: small }, 'Close'))) : null,
+    top, h('div', { className: 'bhd-sections' }, sections));
 }
 
 function dispose() {
@@ -2027,6 +2453,8 @@ async function main() {
     reload: () => Promise.all([load('themes', true), load('plugins', true), refreshInstalled()]),
     openDetails: (kind, id) => { const item = store.data[kind === 'theme' ? 'themes' : 'plugins'].items.find(i => i.id === id); if (item) openDetails(item); return !!item; },
     // install from the console by steambrew.app id: __brewhub.install('theme', '<20 char id>') or ('plugin', '<12 char id>')
+    // every class name and variable Brew Hub uses (also in the plugin's settings): __brewhub.classes()
+    classes: () => CLASS_DOCS,
     install: (kind, id) => {
       const item = store.data[kind === 'theme' ? 'themes' : 'plugins'].items.find(i => i.id === id);
       if (!item) return Promise.reject(new Error('Not in the loaded list. Run __brewhub.reload() first.'));

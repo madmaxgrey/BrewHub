@@ -59,7 +59,7 @@ end
 ---@ffi
 ---@param kind string
 ---@return string
-function sf_list(kind)
+function bh_list(kind)
     local path, slim
     if kind == "themes" then path, slim = "/api/v2", slim_theme
     elseif kind == "plugins" then path, slim = "/api/v1/plugins", slim_plugin
@@ -83,7 +83,7 @@ end
 ---@ffi
 ---@param path string
 ---@return string
-function sf_get(path)
+function bh_get(path)
     if type(path) ~= "string" or not path:match("^/api/[%w%-%._~/%?&=]*$") then return fail("bad path") end
     local body, err = fetch(path)
     if not body then return fail(err) end
@@ -95,7 +95,7 @@ end
 ---@param owner string
 ---@param repo string
 ---@return string
-function sf_readme(owner, repo)
+function bh_readme(owner, repo)
     if type(owner) ~= "string" or type(repo) ~= "string" or not owner:match("^[%w%-%._]+$") or not repo:match("^[%w%-%._]+$") then
         return fail("bad repository")
     end
