@@ -88,6 +88,27 @@ const LOCALES = {
     setNotifyDesc: "Show a Steam notification when a theme or plugin has been installed from Brew Hub.",
     setIntro: "Brew Hub adds its own tab to Millennium's settings, next to Plugins.",
     setOpen: "Open Brew Hub",
+    tabUnofficial: "Unofficial",
+    unofficialNote: "Plugins from GitHub repositories. Brew Hub installs the latest release (.zip or .star) and tells you when a new one is out. steambrew.app does not review these: only add ones you trust.",
+    unofficialEmpty: "No repositories added yet.",
+    addPlaceholder: "GitHub link or owner/repo",
+    add: "Add",
+    removeEntry: "Remove from list",
+    update: "Update",
+    upToDate: "Up to date",
+    updateAvailable: "A new release is available",
+    checking: "Checking...",
+    installedVer: "installed {0}",
+    latestVer: "latest {0}",
+    errBadRepo: "Enter a GitHub link or owner/repo",
+    errDuplicate: "Already in the list",
+    errNoAsset: "The latest release has no .zip or .star file",
+    toastUpdatedTitle: "{0} updated",
+    toastUpdated: "Restart Steam to run the new version.",
+    detectedTitle: "Installed, not on steambrew.app",
+    detectedNote: "Plugins found on this computer that steambrew.app does not list. Link a GitHub repository to follow its releases and get updates.",
+    linkRepo: "Link",
+    pluginDisabled: "Disabled",
   },
   german: {
     tabThemes: "Themes",
@@ -925,6 +946,7 @@ const store = {
   installed: null, // { themes: { "owner/repo": { native, name } }, plugins: { folder: { enabled } }, active: native folder name }
   detail: null, // { kind, id } while the details view is open
   details: {}, // "theme:<id>" / "plugin:<id>" -> { state: loading | ready, text, note }
+  unofficial: { list: [], info: {} }, // list: [{ owner, repo, folder, version }] saved in localStorage; info: "owner/repo" -> { state, release, error, at }
   ops: {}, // "theme:<id>" / "plugin:<id>" -> { state: working | done | error, status, progress, msg }
   listeners: new Set(),
 };
@@ -960,7 +982,7 @@ async function refreshInstalled() {
       const g = x && x.data && x.data.github;
       if (g && g.owner && (g.repo_name || g.repo)) t[pairKey(g.owner, g.repo_name || g.repo)] = { native: x.native, name: x.data.name };
     });
-    (Array.isArray(plugins) ? plugins : []).forEach(x => { if (x && x.data && x.data.name) p[x.data.name] = { enabled: !!x.enabled }; });
+    (Array.isArray(plugins) ? plugins : []).forEach(x => { if (x && x.data && x.data.name) p[x.data.name] = { enabled: !!x.enabled, version: x.data.version != null ? String(x.data.version) : '', title: x.data.common_name ? String(x.data.common_name) : '' }; });
     const next = { themes: t, plugins: p, active: active && active.native ? String(active.native) : '' };
     const sig = JSON.stringify(next);
     if (sig === store.installedSig) return; // nothing changed: no re-render
@@ -992,7 +1014,7 @@ function friendlyStatus(raw) {
 
 const countDownload = (kind, id) => { try { Promise.resolve(backend.bh_get('/api/bump/' + kind + '/' + id)).catch(() => {}); } catch (e) { /* the counter is optional */ } };
 
-async function runInstall(item, key, start, probe, afterOk) {
+async function runInstall(item, key, start, probe, afterOk, onDone) {
   setOp(key, { state: 'working', status: t('statusStarting'), progress: 0, msg: '' });
   hookEmitter(); // before the install starts, so no progress event is missed
   starting++;
@@ -1003,7 +1025,7 @@ async function runInstall(item, key, start, probe, afterOk) {
     afterOk();
     const out = await waitForOp(res.opId || 0, ev => setOp(key, { status: friendlyStatus(ev.status), progress: ev.progress }), probe);
     await refreshInstalled();
-    if (out.ok) { setOp(key, { state: 'done', status: '', progress: 100 }); notifyInstalled(item); }
+    if (out.ok) { if (onDone) { try { onDone(); } catch (e) { /* ignore */ } } setOp(key, { state: 'done', status: '', progress: 100 }); notifyInstalled(item); }
     else setOp(key, { state: 'error', msg: friendlyStatus(out.msg) || t('errFailed') });
   } catch (e) {
     await refreshInstalled();
@@ -1041,6 +1063,144 @@ function installPlugin(item) {
 }
 
 const enablePlugin = folder => core('Core_ChangePluginStatus')(JSON.stringify([{ plugin_name: folder, enabled: true }])).then(refreshInstalled);
+
+/* ═════════════ unofficial plugins (GitHub releases) ═════════════ */
+
+const UNOFFICIAL_KEY = 'brewhub:unofficial';
+function readUnofficial() {
+  try {
+    const v = JSON.parse(localStorage.getItem(UNOFFICIAL_KEY) || '[]');
+    return (Array.isArray(v) ? v : []).filter(x => x && typeof x.owner === 'string' && typeof x.repo === 'string')
+      .map(x => ({ owner: x.owner, repo: x.repo, folder: typeof x.folder === 'string' ? x.folder : '', version: typeof x.version === 'string' ? x.version : '' }));
+  } catch (e) { return []; }
+}
+function saveUnofficial() { try { localStorage.setItem(UNOFFICIAL_KEY, JSON.stringify(store.unofficial.list)); } catch (e) { /* kept for this session only */ } }
+store.unofficial.list = readUnofficial();
+
+const keyOf = e => pairKey(e.owner, e.repo);
+const normName = v => String(v || '').toLowerCase().replace(/[^a-z0-9]/g, '');
+
+// "owner/repo", "github.com/owner/repo", "https://github.com/owner/repo/releases", "...repo.git"
+function parseRepo(text) {
+  const raw = String(text || '').trim().replace(/^git@github\.com:/i, '').replace(/^(?:https?:\/\/)?(?:www\.)?github\.com\//i, '');
+  const m = raw.match(/^([A-Za-z0-9][A-Za-z0-9._-]*)\/([A-Za-z0-9._-]+?)(?:\.git)?(?:[\/?#].*)?$/);
+  if (!m || /^\.+$/.test(m[2])) return null;
+  return { owner: m[1], repo: m[2] };
+}
+
+// numeric versions only ("v1.2.3", "1.2"); null when either side is not one, so an odd tag never claims an update
+function cmpVer(a, b) {
+  const num = v => { const m = String(v == null ? '' : v).trim().match(/^v?(\d+(?:\.\d+)*)/i); return m ? m[1].split('.').map(Number) : null; };
+  const x = num(a), y = num(b);
+  if (!x || !y) return null;
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d > 0 ? 1 : -1; }
+  return 0;
+}
+
+// the release file to install: a .zip or .star, never a source archive; a .zip first, then the one named like the repository
+function pickAsset(release, repo) {
+  const list = (release && Array.isArray(release.assets) ? release.assets : []).filter(a => a && isUrl(a.url) && /\.(zip|star)$/i.test(String(a.name)));
+  const score = a => { const n = String(a.name).toLowerCase(); return (/source|src/.test(n) ? -10 : 0) + (normName(n).includes(normName(repo)) ? 2 : 0) + (n.endsWith('.zip') ? 1 : 0); };
+  return list.slice().sort((a, b) => score(b) - score(a))[0] || null;
+}
+
+// which installed plugin belongs to this repository: the folder noted at install, else a name match (repository or release file name)
+function findFolder(entry, release) {
+  const plugins = store.installed ? store.installed.plugins : {};
+  if (entry.folder && plugins[entry.folder]) return entry.folder;
+  const want = new Set([normName(entry.repo)]);
+  const asset = pickAsset(release, entry.repo);
+  if (asset) { const stem = normName(String(asset.name).replace(/\.(zip|star)$/i, '').replace(/[-_. ]v?\d+(\.\d+)*.*$/i, '')); if (stem) want.add(stem); }
+  return Object.keys(plugins).find(n => want.has(normName(n)) || (plugins[n].title && want.has(normName(plugins[n].title)))) || '';
+}
+
+function unofficialState(entry) {
+  const info = store.unofficial.info[keyOf(entry)] || {};
+  const rel = info.release && typeof info.release === 'object' ? info.release : null;
+  const folder = findFolder(entry, rel);
+  const inst = folder ? store.installed.plugins[folder] : null;
+  // the version Millennium reports for the installed plugin; if we installed a newer release than it reports (an author who forgot to bump it), ours counts
+  let have = '';
+  if (inst) { const read = inst.version, noted = entry.version; have = read && noted ? (cmpVer(read, noted) === -1 ? noted : read) : (read || noted || ''); }
+  const latest = rel && rel.tag ? String(rel.tag) : '';
+  const asset = rel ? pickAsset(rel, entry.repo) : null;
+  return { info, rel, folder, inst, have, latest, asset, newer: !!inst && !!have && !!latest && cmpVer(latest, have) === 1 };
+}
+
+async function checkRelease(entry, force) {
+  const k = keyOf(entry), cur = store.unofficial.info[k];
+  if (cur && cur.state === 'loading') return;
+  if (!force && cur && cur.state === 'ready' && Date.now() - cur.at < CACHE_MS) return;
+  store.unofficial.info[k] = { state: 'loading', at: cur ? cur.at : 0, release: cur ? cur.release : null, error: '' }; emit();
+  try {
+    const rel = await withRetry(() => fromBackend(backend.bh_release(entry.owner, entry.repo)), 1);
+    store.unofficial.info[k] = { state: 'ready', at: Date.now(), release: rel, error: '' };
+  } catch (e) {
+    store.unofficial.info[k] = { state: 'error', at: Date.now(), release: cur ? cur.release : null, error: String(e && e.message || e) };
+    log('could not check', k, e);
+  }
+  emit();
+}
+
+// returns an error text, or '' when the repository was added
+function addUnofficial(text) {
+  const repo = parseRepo(text);
+  if (!repo) return t('errBadRepo');
+  if (store.unofficial.list.some(e => keyOf(e) === keyOf(repo))) return t('errDuplicate');
+  const entry = { owner: repo.owner, repo: repo.repo, folder: '', version: '' };
+  store.unofficial.list.push(entry); saveUnofficial(); emit();
+  checkRelease(entry, true);
+  return '';
+}
+
+// installed plugins that steambrew.app does not list and that no repository in the tab is linked to (only once the steambrew list has loaded, so nothing is wrongly shown while it is missing)
+function detectedPlugins() {
+  const inst = store.installed, listed = store.data.plugins;
+  if (!inst || !listed || listed.state !== 'ready') return [];
+  const known = new Set(listed.items.map(i => String(i.folder).toLowerCase()));
+  const claimed = new Set(store.unofficial.list.map(e => unofficialState(e).folder.toLowerCase()).filter(Boolean));
+  return Object.keys(inst.plugins).filter(n => !known.has(n.toLowerCase()) && !claimed.has(n.toLowerCase())).sort((a, b) => a.localeCompare(b));
+}
+
+// ties an installed plugin to its GitHub repository, so its releases and updates are followed; returns an error text, or ''
+function linkDetected(folder, text) {
+  const repo = parseRepo(text);
+  if (!repo) return t('errBadRepo');
+  const existing = store.unofficial.list.find(e => keyOf(e) === keyOf(repo));
+  if (existing) { existing.folder = folder; saveUnofficial(); emit(); checkRelease(existing, true); return ''; }
+  const entry = { owner: repo.owner, repo: repo.repo, folder, version: '' };
+  store.unofficial.list.push(entry); saveUnofficial(); emit();
+  checkRelease(entry, true);
+  return '';
+}
+
+function removeUnofficial(entry) {
+  store.unofficial.list = store.unofficial.list.filter(e => e !== entry);
+  delete store.unofficial.info[keyOf(entry)]; delete store.ops['unofficial:' + keyOf(entry)];
+  saveUnofficial(); emit();
+}
+
+// installs the latest release, or installs it over the old one when updating
+function installUnofficial(entry, updating) {
+  const key = 'unofficial:' + keyOf(entry);
+  const s = unofficialState(entry);
+  const item = { kind: 'plugin', id: keyOf(entry), name: entry.repo, updating: !!updating };
+  const before = new Set(Object.keys(store.installed ? store.installed.plugins : {}));
+  const fresh = async () => { await refreshInstalled(); return Object.keys(store.installed.plugins).some(n => !before.has(n)); };
+  return runInstall(item, key,
+    async () => {
+      if (!s.asset) throw new Error(t('errNoAsset'));
+      return core('Core_InstallPlugin')(s.asset.url, s.asset.size);
+    },
+    () => (updating ? Promise.resolve(false) : fresh()),
+    () => {},
+    () => {
+      // a new install: the one folder that appeared is this plugin's
+      const added = Object.keys(store.installed ? store.installed.plugins : {}).filter(n => !before.has(n));
+      if (added.length === 1) entry.folder = added[0];
+      entry.version = s.latest; saveUnofficial();
+    });
+}
 
 // the "Restart Required" dialog Millennium itself shows after a theme change (utils PromptReload): Steam's own strings in a ConfirmModal
 const steamText = (key, fallback) => { try { const v = (window as any).LocalizationManager.LocalizeString(key); return v && v !== key ? String(v) : fallback; } catch (e) { return fallback; } };
@@ -1081,8 +1241,8 @@ function notifyInstalled(item) {
     if (!toaster || typeof toaster.toast !== 'function') return;
     const icons = API.IconsModule;
     toaster.toast({
-      title: t('toastTitle', item.name),
-      body: item.kind === 'theme' ? t('toastTheme') : t('toastPlugin'),
+      title: t(item.updating ? 'toastUpdatedTitle' : 'toastTitle', item.name),
+      body: item.updating ? t('toastUpdated') : item.kind === 'theme' ? t('toastTheme') : t('toastPlugin'),
       logo: icons && icons.Download ? h(icons.Download) : h(STORE_ICON),
       onClick: () => { try { API.Navigation.Navigate(item.kind === 'theme' ? THEMES_ROUTE : PLUGINS_ROUTE); } catch (e) { /* ignore */ } },
     });
@@ -1756,6 +1916,9 @@ const CSS = `
 .bh-md details[open]>summary{border-bottom:1px solid var(--bh-line);margin-bottom:0}
 .bh-md .bh-check{margin-right:6px;vertical-align:middle}
 .bh-link{text-decoration:underline;cursor:pointer;opacity:.95}
+.bh-addinput{flex:1 1 260px;min-width:200px}
+.bh-addbtn{flex:none;width:90px}
+.bh-note{font-size:12px;opacity:.7}
 @media (max-width:900px){.bh-dmain{flex-direction:column}.bh-dhero{width:100%;flex-basis:auto}}
 `;
 
@@ -1877,15 +2040,85 @@ function Details(props) {
     h('div', { className: 'bh-readme bh-md' }, d.state === 'loading' ? t('loading') : d.text.trim() ? readme : d.note));
 }
 
+function UnofficialCard(props) {
+  const entry = props.entry;
+  const op = store.ops['unofficial:' + keyOf(entry)] || {};
+  const s = unofficialState(entry);
+  const loading = s.info.state === 'loading';
+  const meta = [t('by', entry.owner), s.have ? t('installedVer', s.have) : ''].filter(Boolean).join(' · ');
+  const stats = [s.latest ? t('latestVer', s.latest) : '', s.rel && s.rel.published ? t('updatedOn', day(s.rel.published)) : ''].filter(Boolean).join(' · ');
+  let line = '';
+  if (loading && !s.rel) line = t('checking');
+  else if (s.info.state === 'error') line = s.info.error;
+  else if (s.rel && !s.asset) line = t('errNoAsset');
+  else if (s.newer) line = t('updateAvailable');
+  else if (s.inst && s.have) line = t('upToDate');
+  const failed = op.state === 'error' ? h('div', { className: 'bh-err' }, op.msg) : null;
+  let action;
+  if (op.state === 'working') {
+    const pct = Math.round(op.progress || 0);
+    action = h('div', { className: 'bh-act' },
+      h(Btn, { disabled: true }, (op.status || t('installing')) + '… ' + pct + '%'),
+      h('div', { className: 'bh-bar' }, h('div', { className: 'bh-fill', style: { width: Math.max(2, Math.min(100, op.progress || 0)) + '%' } })));
+  } else if (!store.installed) action = h('div', { className: 'bh-act' }, h(Btn, { disabled: true }, t('loading')));
+  else if (s.inst && s.newer && s.asset) action = h('div', { className: 'bh-act' }, h(Btn, { onClick: () => installUnofficial(entry, true) }, op.state === 'error' ? t('retry') : t('update')), failed);
+  else if (s.inst) action = h('div', { className: 'bh-act' }, s.inst.enabled ? h(Btn, { disabled: true }, t('enabled')) : h(Btn, { onClick: () => enablePlugin(s.folder) }, t('enable')));
+  else if (s.asset) action = h('div', { className: 'bh-act' }, h(Btn, { onClick: () => installUnofficial(entry, false) }, op.state === 'error' ? t('retry') : t('install')), failed);
+  else action = h('div', { className: 'bh-act' }, h(Btn, { disabled: true }, loading ? t('checking') : t('install')));
+  return h('div', { className: 'bh-card' },
+    h('div', { className: 'bh-body' },
+      h('div', null,
+        h('div', { className: 'bh-name', title: entry.owner + '/' + entry.repo }, (s.inst && s.inst.title) || entry.repo),
+        h('div', { className: 'bh-meta' }, meta),
+        h('div', { className: 'bh-desc' }, line)),
+      h('div', { className: 'bh-meta' }, stats),
+      h('div', { className: 'bh-foot' }, action, h(Btn, { onClick: () => openUrl('https://github.com/' + entry.owner + '/' + entry.repo) }, 'GitHub')),
+      h('div', { className: 'bh-meta' }, h('span', { className: 'bh-link', role: 'button', onClick: () => removeUnofficial(entry) }, t('removeEntry')))));
+}
+
+function DetectedCard(props) {
+  const folder = props.folder, inst = store.installed.plugins[folder] || {};
+  const [text, setText] = React.useState('');
+  const [err, setErr] = React.useState('');
+  const submit = () => { const e = linkDetected(folder, text); if (e) setErr(e); };
+  const meta = [inst.version ? t('installedVer', inst.version) : '', inst.enabled ? t('enabled') : t('pluginDisabled')].filter(Boolean).join(' · ');
+  return h('div', { className: 'bh-card' },
+    h('div', { className: 'bh-body' },
+      h('div', null,
+        h('div', { className: 'bh-name', title: folder }, inst.title || folder),
+        h('div', { className: 'bh-meta' }, meta)),
+      h('input', { className: 'bh-input', value: text, placeholder: t('addPlaceholder'), onChange: e => { setText(e.target.value); setErr(''); }, onKeyDown: e => { if (e.key === 'Enter') submit(); } }),
+      err ? h('div', { className: 'bh-err' }, err) : null,
+      h('div', { className: 'bh-foot' }, h(Btn, { onClick: submit, disabled: !text.trim() }, t('linkRepo')))));
+}
+
+function UnofficialPane() {
+  const [text, setText] = React.useState('');
+  const [err, setErr] = React.useState('');
+  const submit = () => { const e = addUnofficial(text); if (e) setErr(e); else { setErr(''); setText(''); } };
+  const list = store.unofficial.list;
+  const detected = detectedPlugins();
+  return h(React.Fragment, null,
+    h('div', { className: 'bh-note' }, t('unofficialNote')),
+    h('div', { className: 'bh-bar2' },
+      h('input', { className: 'bh-input bh-addinput', value: text, placeholder: t('addPlaceholder'), onChange: e => { setText(e.target.value); setErr(''); }, onKeyDown: e => { if (e.key === 'Enter') submit(); } }),
+      h('div', { className: 'bh-addbtn' }, h(Btn, { onClick: submit, disabled: !text.trim() }, t('add')))),
+    err ? h('div', { className: 'bh-err' }, err) : null,
+    list.length ? h('div', { className: 'bh-grid' }, list.map(e => h(UnofficialCard, { key: keyOf(e), entry: e }))) : h('div', { className: 'bh-empty' }, t('unofficialEmpty')),
+    detected.length ? h('div', { className: 'bh-name' }, t('detectedTitle')) : null,
+    detected.length ? h('div', { className: 'bh-note' }, t('detectedNote')) : null,
+    detected.length ? h('div', { className: 'bh-grid' }, detected.map(f => h(DetectedCard, { key: f, folder: f }))) : null);
+}
+
 function BrewHubView() {
   useStore();
-  const [section, setSection] = React.useState(() => { try { return sessionStorage.getItem('brewhub-section') === 'plugins' ? 'plugins' : 'themes'; } catch (e) { return 'themes'; } });
+  const [section, setSection] = React.useState(() => { try { const v = sessionStorage.getItem('brewhub-section'); return v === 'plugins' || v === 'unofficial' ? v : 'themes'; } catch (e) { return 'themes'; } });
   const [query, setQuery] = React.useState('');
   const [sort, setSort] = React.useState('popular');
   const [filter, setFilter] = React.useState('all');
   const pick = id => { setSection(id); setFilter('all'); try { sessionStorage.setItem('brewhub-section', id); } catch (e) { /* ignore */ } };
 
-  React.useEffect(() => { load(section, false); }, [section]);
+  React.useEffect(() => { if (section === 'unofficial') { store.unofficial.list.forEach(e => checkRelease(e, false)); load('plugins', false); } else load(section, false); }, [section]);
   // what is installed changes outside of this tab too (Millennium's own Themes and Plugins tabs): look again on opening, on focus and every few seconds
   React.useEffect(() => {
     let busy = false;
@@ -1902,10 +2135,12 @@ function BrewHubView() {
     store.detail = null;
   }
 
-  const data = store.data[section];
+  const unofficial = section === 'unofficial';
+  const data = store.data[section] || { state: 'ready', items: [], at: 0, error: '' };
+  const busy = unofficial ? store.unofficial.list.some(e => (store.unofficial.info[keyOf(e)] || {}).state === 'loading') : data.state === 'loading';
   const shown = arrange(data.items, query, sort, filter);
   const tab = (id, label) => h('div', { key: id, role: 'button', className: 'bh-tab' + (section === id ? ' bh-on' : ''), onClick: () => pick(id) },
-    label + (store.data[id].state === 'ready' ? ' (' + store.data[id].items.length + ')' : ''));
+    label + (id === 'unofficial' ? (store.unofficial.list.length ? ' (' + store.unofficial.list.length + ')' : '') : store.data[id].state === 'ready' ? ' (' + store.data[id].items.length + ')' : ''));
 
   let body;
   if (data.state === 'loading' && !data.items.length) body = h('div', { className: 'bh-empty' }, t('loadingList'));
@@ -1915,14 +2150,15 @@ function BrewHubView() {
 
   return h('div', { className: 'bh-root' },
     h('style', null, CSS),
-    h('div', { className: 'bh-bar1' }, tab('themes', t('tabThemes')), tab('plugins', t('tabPlugins')), h('div', { className: 'bh-grow' }),
-      h('div', { style: { width: 110 } }, h(Btn, { onClick: () => { load(section, true); refreshInstalled(); }, disabled: data.state === 'loading' }, data.state === 'loading' ? t('loading') : t('refresh')))),
-    h('div', { className: 'bh-bar2' },
-      h('div', { className: 'bh-pills' }, SORTS.map(o => h('div', { key: o[0], role: 'button', className: 'bh-pill' + (sort === o[0] ? ' bh-on' : ''), onClick: () => setSort(o[0]) }, t(o[1])))),
-      h('div', { className: 'bh-grow' }),
-      h(Filter, { options: filterOptions(section, data.items), value: filter, onChange: setFilter }),
-      h('div', { className: 'bh-search' }, h(SEARCH_ICON), h('input', { className: 'bh-input', value: query, placeholder: t('searchPlaceholder'), onChange: e => setQuery(e.target.value) }))),
-    body);
+    h('div', { className: 'bh-bar1' }, tab('themes', t('tabThemes')), tab('plugins', t('tabPlugins')), tab('unofficial', t('tabUnofficial')), h('div', { className: 'bh-grow' }),
+      h('div', { style: { width: 110 } }, h(Btn, { onClick: () => { if (unofficial) store.unofficial.list.forEach(e => checkRelease(e, true)); else load(section, true); refreshInstalled(); }, disabled: busy }, busy ? t('loading') : t('refresh')))),
+    unofficial ? h(UnofficialPane) : h(React.Fragment, null,
+      h('div', { className: 'bh-bar2' },
+        h('div', { className: 'bh-pills' }, SORTS.map(o => h('div', { key: o[0], role: 'button', className: 'bh-pill' + (sort === o[0] ? ' bh-on' : ''), onClick: () => setSort(o[0]) }, t(o[1])))),
+        h('div', { className: 'bh-grow' }),
+        h(Filter, { options: filterOptions(section, data.items), value: filter, onChange: setFilter }),
+        h('div', { className: 'bh-search' }, h(SEARCH_ICON), h('input', { className: 'bh-input', value: query, placeholder: t('searchPlaceholder'), onChange: e => setQuery(e.target.value) }))),
+      body));
 }
 
 /* ═════════════ adding the tab to Millennium's settings ═════════════
@@ -1940,6 +2176,10 @@ function brewHubPage() {
 }
 
 let injected = 0;
+let renders = 0; // how often Millennium's settings page rendered through our wrapper
+let pagesSeen = -1; // length of the page list found in the last render, -1 when none was found
+let rewraps = 0; // how often the route entry had to be wrapped again
+let lastError = '';
 function findPages(node, depth) {
   if (!node || typeof node !== 'object' || depth > 8) return null;
   if (Array.isArray(node)) { for (const n of node) { const r = findPages(n, depth + 1); if (r) return r; } return null; }
@@ -1951,6 +2191,7 @@ function findPages(node, depth) {
 
 function addPage(tree) {
   const pages = findPages(tree, 0);
+  pagesSeen = pages ? pages.length : -1;
   if (!pages || pages.some(p => p && p.route === PAGE_ROUTE)) return;
   const at = pages.findIndex(p => p && p.route === PLUGINS_ROUTE);
   pages.splice(at < 0 ? pages.length : at + 1, 0, brewHubPage());
@@ -1967,7 +2208,8 @@ let stopped = false;
 function wrapSettings(Orig) {
   const w = function BrewHubSettingsWrapper(props) {
     const tree = Orig(props); // its hooks run inside this component, in the same order every render
-    try { addPage(tree); } catch (e) { log('could not add the tab', e); }
+    renders++;
+    try { addPage(tree); } catch (e) { lastError = String(e && e.message || e); log('could not add the tab', e); }
     return tree;
   };
   w.__brewhub = true;
@@ -1977,22 +2219,36 @@ function wrapSettings(Orig) {
 // adding and removing a throwaway route changes the route count, which is what makes the router rebuild its route elements
 async function rebuildRoutes() {
   try { routerHook.addRoute(SYNC_ROUTE, () => null, {}); await sleep(80); routerHook.removeRoute(SYNC_ROUTE); }
-  catch (e) { log('could not refresh the routes', e); }
+  catch (e) { lastError = String(e && e.message || e); log('could not refresh the routes', e); }
+  // newer Millennium builds can also re-render Steam's router directly
+  try { if (typeof (window as any).MILLENNIUM_STEAM_FORCE_RERENDER === 'function') (window as any).MILLENNIUM_STEAM_FORCE_RERENDER(); } catch (e) { /* optional */ }
+}
+
+// true when the current settings route entry was wrapped just now
+function ensureWrapped() {
+  const map = routerHook && routerHook.routerState && routerHook.routerState._routes;
+  const entry = map && map.get(SETTINGS_ROUTE);
+  if (!entry || typeof entry.component !== 'function') return false;
+  settingsEntry = entry;
+  if (entry.component.__brewhub) return false;
+  originalSettings = entry.component;
+  entry.component = wrapSettings(entry.component);
+  return true;
 }
 
 async function patchSettingsRoute() {
   for (let i = 0; i < 120 && !stopped; i++) {
-    const map = routerHook && routerHook.routerState && routerHook.routerState._routes;
-    const entry = map && map.get(SETTINGS_ROUTE);
-    if (entry && typeof entry.component === 'function') {
-      if (!entry.component.__brewhub) { originalSettings = entry.component; entry.component = wrapSettings(entry.component); }
-      settingsEntry = entry;
-      await rebuildRoutes();
-      return;
-    }
+    if (ensureWrapped()) { await rebuildRoutes(); break; }
+    if (settingsEntry) break;
     await sleep(500); // Millennium registers its route while it starts
   }
-  if (!stopped) log('could not find the Millennium settings route');
+  if (!settingsEntry) { if (!stopped) log('could not find the Millennium settings route'); return; }
+  // if Millennium registers the route again (a new entry without our wrapper) wrap that one too
+  while (!stopped) {
+    await sleep(1500);
+    if (stopped) break;
+    try { if (ensureWrapped()) { rewraps++; await rebuildRoutes(); } } catch (e) { lastError = String(e && e.message || e); }
+  }
 }
 
 /* ═════════════ the plugin's own settings entry ═════════════ */
@@ -2239,6 +2495,24 @@ const CLASS_DOCS = [
     ]
   },
   {
+    "group": "Unofficial tab",
+    "blurb": "Plugins added from GitHub repositories. Its cards use the card classes above.",
+    "items": [
+      {
+        "selector": ".bh-note",
+        "about": "The small grey line above the list."
+      },
+      {
+        "selector": ".bh-addinput",
+        "about": "The box where a GitHub link or owner/repo is typed. It also carries .bh-input."
+      },
+      {
+        "selector": ".bh-addbtn",
+        "about": "The box around the Add button."
+      }
+    ]
+  },
+  {
     "group": "Variables set on .bh-root",
     "blurb": "Custom properties a theme can override",
     "items": [
@@ -2449,7 +2723,22 @@ async function main() {
   (window as any).__brewhub = {
     dispose,
     // for bug reports: did the route patch run and did the tab get added (injected stays 0 until Millennium's settings have been opened)
-    status: () => ({ patched: !!settingsEntry, injected, emitterHooked, installed: !!store.installed, themes: store.data.themes.state, plugins: store.data.plugins.state }),
+    status: () => ({ patched: !!settingsEntry, wrapped: !!(settingsEntry && settingsEntry.component && settingsEntry.component.__brewhub), renders, pagesSeen, injected, rewraps, lastError, emitterHooked, installed: !!store.installed, themes: store.data.themes.state, plugins: store.data.plugins.state }),
+    // for bug reports: open Millennium's settings first, then run __brewhub.diagnose() and copy the result
+    diagnose: () => {
+      const reg = (window as any).__millennium_registry;
+      const map = routerHook && routerHook.routerState && routerHook.routerState._routes;
+      const parts = ['DialogButton', 'DialogBody', 'Classes', 'ToggleField', 'Field', 'showModal', 'ConfirmModal', 'toaster', 'IconsModule', 'Navigation', 'routerHook', 'ffi'];
+      return {
+        status: (window as any).__brewhub.status(),
+        routes: map ? Array.from(map.keys()) : null,
+        react: { version: React && React.version, hasHooks: !!(React && React.useState) },
+        steamParts: Object.fromEntries(parts.map(k => [k, typeof API[k]])),
+        registry: reg ? { register: typeof reg.register, available: reg.available ? Object.keys(reg.available) : null } : null,
+        forceRerender: typeof (window as any).MILLENNIUM_STEAM_FORCE_RERENDER,
+        language: currentLanguage,
+      };
+    },
     reload: () => Promise.all([load('themes', true), load('plugins', true), refreshInstalled()]),
     openDetails: (kind, id) => { const item = store.data[kind === 'theme' ? 'themes' : 'plugins'].items.find(i => i.id === id); if (item) openDetails(item); return !!item; },
     // install from the console by steambrew.app id: __brewhub.install('theme', '<20 char id>') or ('plugin', '<12 char id>')

@@ -16,6 +16,9 @@ local function fail(msg)
     return json.encode({ __error = msg })
 end
 
+-- owner and repository names as GitHub allows them; they end up in commands and paths, so nothing else gets through
+local function valid_name(v) return type(v) == "string" and v:match("^[%w%-%._]+$") ~= nil and not v:match("^%.+$") end
+
 local function fetch(path)
     if not http_ok or type(http) ~= "table" or type(http.get) ~= "function" then
         return nil, "the http module is not available"
@@ -108,6 +111,36 @@ function bh_readme(owner, repo)
     end
     return fail("no README found")
 end
+
+-- the latest release of a GitHub repository, for the Unofficial tab: only the tag and the .zip/.star-style files
+---@ffi
+---@param owner string
+---@param repo string
+---@return string
+function bh_release(owner, repo)
+    if not valid_name(owner) or not valid_name(repo) then return fail("bad repository") end
+    if not http_ok or type(http) ~= "table" or type(http.get) ~= "function" then return fail("the http module is not available") end
+    local ok, res = pcall(http.get, "https://api.github.com/repos/" .. owner .. "/" .. repo .. "/releases/latest", {
+        headers = { ["Accept"] = "application/vnd.github+json", ["User-Agent"] = "Brew-Hub" }, timeout = 20,
+    })
+    if not ok then return fail(tostring(res)) end
+    if type(res) ~= "table" then return fail("no answer from GitHub") end
+    if res.status == 404 then return fail("no release found") end
+    if res.status == 403 or res.status == 429 then return fail("GitHub is limiting requests, try again later") end
+    if res.status ~= 200 then return fail("HTTP " .. tostring(res.status)) end
+    local dok, rel = pcall(json.decode, res.body)
+    if not dok or type(rel) ~= "table" or type(rel.tag_name) ~= "string" then return fail("unexpected answer from GitHub") end
+    local assets = {}
+    if type(rel.assets) == "table" then
+        for _, a in ipairs(rel.assets) do
+            if type(a) == "table" and type(a.name) == "string" and type(a.browser_download_url) == "string" then
+                assets[#assets + 1] = { name = a.name, url = a.browser_download_url, size = type(a.size) == "number" and a.size or 0 }
+            end
+        end
+    end
+    return json.encode({ tag = rel.tag_name, name = clean(rel.name), published = clean(rel.published_at), assets = assets })
+end
+
 
 local function on_load()
     logger:info("Brew Hub loaded")
